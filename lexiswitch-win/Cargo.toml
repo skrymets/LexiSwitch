@@ -7,10 +7,31 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# `windows` arrives at task 5.1, with the feature set established by
-# spike-windows-input-primitives. It is not guessed here — the spike settles which features
-# are actually needed, and that choice carries directly into compile time and binary size.
-#
-# A path dependency on lexiswitch-core is likely once shared types cross the boundary
-# (layout tables built here are consumed there). Added when a type actually crosses, not
-# before.
+# Layout tables and key positions are defined in core; this crate fills them in from what
+# Windows reports. The dependency runs one way only — core knows nothing about Win32.
+lexiswitch-core = { path = "../lexiswitch-core" }
+
+# Feature set established by spike-windows-input-primitives rather than guessed. See
+# docs/spikes/2026-08-05-windows-input-primitives.md for what each one turned out to be
+# needed for, including two that are not where the API docs suggest.
+windows = { version = "0.62", features = [
+    # GetKeyboardLayoutList, ToUnicodeEx, MapVirtualKeyExW, RegisterHotKey — and HKL,
+    # which lives here rather than in Win32_UI_TextServices.
+    "Win32_UI_Input_KeyboardAndMouse",
+    # RegisterRawInputDevices, GetRawInputData, RAWINPUT — and RIM_TYPEKEYBOARD, which is
+    # here rather than alongside the other message constants.
+    "Win32_UI_Input",
+    "Win32_UI_WindowsAndMessaging", # message-only window, message loop, WM_INPUT, WM_HOTKEY
+    "Win32_UI_Shell",               # Shell_NotifyIconW, for the tray icon and balloons
+    "Win32_System_LibraryLoader",   # GetModuleHandleW, for the window class instance
+    "Win32_System_Threading",       # OpenProcess, QueryFullProcessImageNameW (task 7.1)
+    "Win32_Globalization",          # LCIDToLocaleName, resolving a layout to a name
+    "Win32_UI_Accessibility",       # IUIAutomation, for the IsPassword property (task 7.2)
+    "Win32_System_Com",             # CoInitializeEx / CoCreateInstance, for the above
+    "Win32_System_Memory",          # VirtualLock, and GlobalAlloc for clipboard transfer
+    "Win32_System_DataExchange",    # the clipboard (task 8.2)
+    "Win32_System_Ole",             # CF_UNICODETEXT and friends
+    # Nothing here draws anything. WNDCLASSW carries HBRUSH/HICON/HCURSOR, which puts the
+    # struct and RegisterClassW behind this feature.
+    "Win32_Graphics_Gdi",
+] }

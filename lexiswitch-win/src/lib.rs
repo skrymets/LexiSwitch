@@ -21,13 +21,17 @@
 // `cargo clippy`; plain `cargo build` ignores tool lints.
 #![warn(clippy::undocumented_unsafe_blocks)]
 
-// Modules arrive with the tasks that implement them:
-//   rawinput.rs    task 5.3   hidden message window, RIDEV_INPUTSINK, WM_INPUT parsing
-//   hotkey.rs      task 5.4   RegisterHotKey / WM_HOTKEY, multi-tap classification
-//   layouts.rs     task 5.6   GetKeyboardLayoutList + ToUnicodeEx probing
-//   inject.rs      task 6.1   SendInput: backspaces then KEYEVENTF_UNICODE
-//   focus.rs       task 7.1   foreground window to process name; password-field probe
-//   selection.rs   task 8.1   automation text pattern read/replace
-//   clipboard.rs   task 8.2   snapshot and restore text formats
-//   langswitch.rs  task 6.3   layout activation via WM_INPUTLANGCHANGEREQUEST
-//   tray.rs        task 9.3   tray icon, menu, notifications
+mod error;
+pub mod clipboard;
+pub mod focus;
+pub mod hotkey;
+pub mod inject;
+pub mod langswitch;
+pub mod layouts;
+pub mod pagelock;
+pub mod rawinput;
+pub mod selection;
+pub mod tray;
+pub mod window;
+
+pub use error::WinError;

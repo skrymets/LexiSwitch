@@ -9,5 +9,8 @@ publish.workspace = true
 [dependencies]
 lexiswitch-core = { path = "../lexiswitch-core" }
 lexiswitch-win = { path = "../lexiswitch-win" }
+# Only for the message constants the event loop matches on (WM_INPUT, WM_HOTKEY). No Win32
+# call is made from this crate — everything that touches the API lives in lexiswitch-win.
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging"] }
 
 # serde + toml arrive at task 4.2 (config), once there is a config to parse.

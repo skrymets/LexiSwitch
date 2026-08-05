@@ -36,6 +36,7 @@ version = "0.1.0"
 dependencies = [
  "lexiswitch-core",
  "lexiswitch-win",
+ "windows",
 ]
 
 [[package]]

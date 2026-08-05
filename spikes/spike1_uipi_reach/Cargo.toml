@@ -1,0 +1,19 @@
+[package]
+name = "spike1_uipi_reach"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# NOT a workspace member. See spikes/README.md.
+[workspace]
+
+[dependencies]
+windows = { version = "0.62", features = [
+    "Win32_UI_Input",              # RegisterRawInputDevices, GetRawInputData, RAWINPUT
+    "Win32_UI_WindowsAndMessaging", # window class, message loop, HWND_MESSAGE
+    "Win32_System_LibraryLoader",  # GetModuleHandleW, for the class hinstance
+    "Win32_System_Threading",      # OpenProcess, QueryFullProcessImageNameW
+    # Needed only because WNDCLASSW carries HBRUSH/HICON/HCURSOR, so the whole struct and
+    # RegisterClassW sit behind this feature. Nothing here draws anything.
+    "Win32_Graphics_Gdi",
+] }

@@ -4,9 +4,17 @@
 
 Accepted
 
+> **Correction, 2026-08-05.** The worked example in Context read `ауфегкуі` →
+> `lexiswitch`, which is not the positional conversion — it is `features`, as the very next
+> sentence's `а` → `f` implies and as
+> [the spike findings](../spikes/2026-08-05-windows-input-primitives.md) verified against
+> extracted layout tables. The example was corrected in place. This record's *decision* is
+> unchanged and therefore needs no superseding ADR; the note exists so the edit is not
+> silent.
+
 ## Context
 
-Converting `ауфегкуі` back to `lexiswitch` is not a character-to-character translation
+Converting `ауфегкуі` back to `features` is not a character-to-character translation
 between alphabets. It is a reinterpretation of *physical key positions* under a different
 layout: the key that produces `а` on Ukrainian produces `f` on US English because it is
 the same physical key.

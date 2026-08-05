@@ -25,7 +25,7 @@ conversion, in place, in the focused application.
 #### Scenario: Mistyped word is corrected
 
 - **WHEN** the user types `ауфегкуі` and presses the last-word hotkey
-- **THEN** the text is replaced with `lexiswitch`
+- **THEN** the text is replaced with `features`
 - **AND** the cursor is left where it would be had the corrected text been typed directly
 
 #### Scenario: No recent typing is available

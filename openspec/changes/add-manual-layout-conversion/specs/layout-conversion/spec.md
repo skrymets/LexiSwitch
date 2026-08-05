@@ -52,7 +52,7 @@ character.
 #### Scenario: Ukrainian text typed under an English layout
 
 - **WHEN** the text `ауфегкуі` is converted from Ukrainian to English
-- **THEN** the result is `lexiswitch`
+- **THEN** the result is `features`
 
 #### Scenario: Mixed case is preserved
 

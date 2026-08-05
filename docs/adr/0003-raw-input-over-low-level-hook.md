@@ -66,10 +66,32 @@ application. This ADR establishes a capability ceiling, not privacy on its own. 
 comes from the buffer containment rules in [ADR-0005](0005-bounded-in-memory-keystroke-buffer.md)
 and from the no-network, no-telemetry constraints in the spec.
 
-**Open, to be settled by spike.** Whether `RIDEV_INPUTSINK` is subject to the same UIPI
-restriction as hooks — that is, whether an unelevated LexiSwitch sees keystrokes typed
-into elevated windows. Low-level hooks do not. If Raw Input behaves the same, it is an
-accepted and documented limitation, not a design change.
+**Settled by spike, 2026-08-05: elevated windows are opaque.** `RIDEV_INPUTSINK` is subject
+to the same UIPI restriction as a low-level hook. An unelevated LexiSwitch receives every
+keystroke typed into unelevated windows and *nothing at all* from elevated ones — not
+delayed or partial, silent. Measured in
+[the spike findings](../spikes/2026-08-05-windows-input-primitives.md); this was the
+outcome anticipated above, so it is an accepted limitation rather than a design change.
+
+The practical effect is narrow: last-word correction does not work in an elevated editor or
+an elevated terminal. It fails by doing nothing, which is the right failure — the buffer is
+empty, and the `manual-correction` spec already requires a no-op with a tray hint when
+nothing was recorded.
+
+**The workaround is to run LexiSwitch elevated, and it is not recommended.** It would work,
+and it costs more than it returns:
+
+- A process that observes every keystroke system-wide becomes a far more valuable target
+  once it holds administrator rights. The privacy model in
+  [ADR-0005](0005-bounded-in-memory-keystroke-buffer.md) rests on the buffer being small,
+  readable, and audited — elevation raises the cost of any flaw in exactly that code without
+  making the code better.
+- Elevation would have to be granted at every start, via UAC or a scheduled task registered
+  with highest privileges — the latter being a persistent elevated autostart entry, which is
+  itself a thing worth not having.
+- It buys correction in elevated windows only, which is a rare place to be typing prose.
+
+The recommendation is to accept the limitation and keep the agent unelevated.
 
 ## Alternatives Considered
 

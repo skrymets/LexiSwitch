@@ -1,0 +1,17 @@
+[package]
+name = "spike3_layout_tables"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# NOT a workspace member. The root Cargo.toml lists exclude = ["spikes"]; this line stops
+# cargo from walking up and adopting the root workspace anyway.
+[workspace]
+
+[dependencies]
+windows = { version = "0.62", features = [
+    # GetKeyboardLayoutList, ToUnicodeEx, MapVirtualKeyExW — and HKL, which lives here
+    # rather than in Win32_UI_TextServices as might be expected.
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Globalization", # LCIDToLocaleName, resolving a layout to a name
+] }

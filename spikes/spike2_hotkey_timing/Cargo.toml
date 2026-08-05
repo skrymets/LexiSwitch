@@ -1,0 +1,16 @@
+[package]
+name = "spike2_hotkey_timing"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# NOT a workspace member. See spikes/README.md.
+[workspace]
+
+[dependencies]
+windows = { version = "0.62", features = [
+    "Win32_UI_Input_KeyboardAndMouse", # RegisterHotKey, UnregisterHotKey
+    "Win32_UI_WindowsAndMessaging",    # window class, message loop, WM_HOTKEY
+    "Win32_System_LibraryLoader",      # GetModuleHandleW
+    "Win32_Graphics_Gdi",              # only because WNDCLASSW carries GDI handles
+] }

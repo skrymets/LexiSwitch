@@ -10,7 +10,7 @@
 
 - [ ] 2.1 Write failing tests for loading a `LayoutTable` from fixture JSON, including dead-key positions
 - [ ] 2.2 Implement `LayoutTable` with forward and reverse maps; make 2.1 pass
-- [ ] 2.3 Write failing tests for position-based conversion: `ауфегкуі` → `lexiswitch`, mixed case preserved, QWERTZ `y`/`z` transposition
+- [ ] 2.3 Write failing tests for position-based conversion: `ауфегкуі` → `features`, mixed case preserved, QWERTZ `y`/`z` transposition
 - [ ] 2.4 Implement conversion; make 2.3 pass
 - [ ] 2.5 Write failing tests for pass-through: characters absent from the source layout, and dead-key positions in either layout, are returned unchanged
 - [ ] 2.6 Implement pass-through; make 2.5 pass
@@ -46,7 +46,7 @@
 
 - [ ] 5.1 Create the crate; add `windows` with the feature set established by the spike
 - [ ] 5.2 Create a hidden message-only window and its message loop
-- [ ] 5.3 Register keyboard Raw Input with `RIDEV_INPUTSINK`; parse `WM_INPUT` into `(scancode, vkey, flags, up/down)`
+- [ ] 5.3 Register keyboard Raw Input with `RIDEV_INPUTSINK`; parse `WM_INPUT` into `(scancode, vkey, flags, up/down)`, discarding modifier-key events and collapsing auto-repeat — the spike observed 14 indistinguishable `down` events from one held key, enough to evict real typing from a 64-entry ring
 - [ ] 5.4 Register hotkeys via `RegisterHotKey`; on failure, report which combination is unavailable and abort startup
 - [ ] 5.5 Classify multi-tap from `WM_HOTKEY` message timestamps, using the window value the spike validated
 - [ ] 5.6 Build layout tables at startup from `GetKeyboardLayoutList` and `ToUnicodeEx`, flushing dead-key state between probes; refuse to start with fewer than two layouts
@@ -58,7 +58,7 @@
 - [ ] 6.1 Implement injection: `SendInput` backspaces followed by Unicode characters
 - [ ] 6.2 Verify the foreground window is unchanged immediately before injecting; abandon the operation if focus moved
 - [ ] 6.3 Implement post-correction layout activation for the foreground window
-- [ ] 6.4 **Milestone:** typing `ауфегкуі` in Notepad and pressing the hotkey yields `lexiswitch` with the layout switched
+- [ ] 6.4 **Milestone:** typing `ауфегкуі` in Notepad and pressing the hotkey yields `features` with the layout switched
 - [ ] 6.5 **Milestone:** a second press within the multi-tap window restores `ауфегкуі` exactly
 
 ## 7. Containment — `lexiswitch-win`

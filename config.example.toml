@@ -1,0 +1,101 @@
+# LexiSwitch configuration.
+#
+# Copy to %APPDATA%\LexiSwitch\config.toml and edit. Every value below is the default, so a
+# missing file, an empty file, or a file with only the sections you care about all behave
+# identically to this one.
+#
+# The file is re-read when it changes on disk. A file that fails validation is rejected
+# whole — the last configuration that did validate stays in effect, and the tray reports
+# what was wrong and on which line. There is no half-applied state.
+
+[hotkeys]
+# Bindings are "Modifier+Modifier+Key". Recognised modifiers: Ctrl, Alt, Shift, Win.
+#
+# Pause is the default because Windows leaves it unbound and almost nothing claims it.
+# Keyboards without a Pause key need these rebound. If another application already holds a
+# combination, startup fails loudly and says which one — it does not silently continue with
+# a hotkey that will never fire.
+convert_last_word = "Pause"
+convert_selection = "Shift+Pause"
+convert_clipboard = "Ctrl+Pause"
+pause_toggle = "Ctrl+Shift+Pause"
+
+# How long after a press a further press counts as continuing the same correction rather
+# than starting a new one. Presses within this window cycle through the candidate layouts
+# and wrap back to the original, which is also how undo works.
+#
+# Measured on this hardware: deliberate multi-taps land around 141-157 ms and deliberate
+# separations above 2500 ms, so 500 ms sits clear of both. Message timestamps resolve to
+# 15.625 ms, so values below about 50 ms are not meaningfully distinguishable.
+multi_tap_window_ms = 500
+
+[layouts]
+# Cycle order, by language tag — for example ["en-US", "de-DE"].
+#
+# Empty means: use the installed order, with the layout that was active while typing first.
+# With two layouts installed the second press restores the original, so this is double-tap
+# undo without configuring anything.
+candidates = []
+
+[buffer]
+# How long recent keystrokes may sit unused before they are discarded. Shorter is safer and
+# more likely to leave nothing to correct; longer is more convenient and holds typing in
+# memory for longer.
+idle_timeout_secs = 30
+
+# Never record keystrokes while a password field has focus.
+#
+# Setting this to false is REJECTED by validation, not honoured. The key exists so that its
+# absence cannot be mistaken for an oversight. Detection is reliable for native Win32 and
+# WinUI controls and weaker inside browsers and Electron applications; use `exclusions`
+# below for anything where that gap matters.
+respect_password_fields = true
+
+[selection]
+# When converting a selection, LexiSwitch first tries the accessibility text pattern, which
+# touches nothing else. Where an application does not support it — Windows Terminal, for
+# instance — it can fall back to copy, convert, paste, restore.
+#
+# The fallback puts your selected text on the clipboard briefly, where clipboard managers
+# and Windows Clipboard History can see it. That is inherent to the mechanism and identical
+# to pressing Ctrl+C yourself. Set false to refuse the fallback: selection conversion then
+# reports "unsupported here" instead of using the clipboard.
+allow_clipboard_fallback = true
+
+[exclusions]
+# Applications where keystrokes are never recorded at all, matched on executable name and
+# compared case-insensitively.
+#
+# This is the backstop for password-field detection. Password managers are listed because a
+# detection failure matters most there.
+#
+# WindowsTerminal.exe is listed for a different and stronger reason: a terminal password
+# prompt is *undetectable in principle*. There is no control with an IsPassword property —
+# only a grid of text and a shell that has stopped echoing, so "[sudo] Enter password for
+# you:" is indistinguishable from any other line to every accessibility API. Measured and
+# recorded in docs/manual-tests.md.
+#
+# The cost is real: correction stops working in the terminal, which ADR-0005 names as a
+# place the feature is most wanted. If you need it for a session with no password prompt in
+# it, the pause-toggle hotkey is the intended escape — pause, or remove the entry here.
+processes = [
+    "KeePassXC.exe",
+    "1Password.exe",
+    "Bitwarden.exe",
+    "WindowsTerminal.exe",
+]
+
+[behavior]
+# After a correction, activate the layout the text was converted into — so continuing to
+# type produces more of the same language rather than more of the same mistake.
+#
+# Off by default. It makes the next word land in a different layout from the one just
+# corrected, which is disorienting when fixing several words in a row: each correction
+# silently changes what the following keystrokes will produce.
+switch_layout_after_correction = false
+
+[logging]
+# Off by default. When enabled, records event kinds and lengths only — "converted_word
+# len=7" — never the text itself, neither before nor after conversion. Nothing derived from
+# your keystrokes is written to disk.
+enabled = false

@@ -11,11 +11,8 @@
 // The boundary ADR-0001 draws, stated to the compiler rather than to the reader.
 #![forbid(unsafe_code)]
 
+pub mod buffer;
+pub mod config;
 pub mod convert;
+pub mod cycle;
 pub mod layout;
-
-// Modules arrive with the tasks that implement them, test-first:
-//   buffer.rs     task 3.2   KeyBuffer, the 64-entry ring
-//   cycle.rs      task 3.10  candidate selection and multi-tap cycling
-//   config.rs     task 4.2   config types, defaults, validation
-//   exclusion.rs  task 4.5   process-name and window-class matching

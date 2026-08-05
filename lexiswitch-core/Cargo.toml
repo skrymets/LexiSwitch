@@ -10,6 +10,12 @@ publish.workspace = true
 # Win32 because it depends on nothing that can. Anything added here must build and test on
 # a machine with no Windows APIs present.
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
+# Buffer hygiene (ADR-0005). This crate forbids unsafe, so it cannot issue the volatile
+# writes that survive optimisation on its own — zeroize provides them behind a safe API.
+# Pure Rust, no OS dependency, so the no-Win32 rule above still holds.
+zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 # Test-only, and the distinction matters. In production `lexiswitch-win` probes

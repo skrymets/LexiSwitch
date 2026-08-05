@@ -1,0 +1,16 @@
+[package]
+name = "lexiswitch-win"
+description = "Every Win32 call and every unsafe block."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `windows` arrives at task 5.1, with the feature set established by
+# spike-windows-input-primitives. It is not guessed here — the spike settles which features
+# are actually needed, and that choice carries directly into compile time and binary size.
+#
+# A path dependency on lexiswitch-core is likely once shared types cross the boundary
+# (layout tables built here are consumed there). Added when a type actually crosses, not
+# before.

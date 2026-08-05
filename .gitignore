@@ -1,0 +1,13 @@
+/target
+/spikes/**/target
+**/*.rs.bk
+*.pdb
+
+.claude
+CLAUDE.md
+
+# Local editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

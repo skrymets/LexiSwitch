@@ -1,0 +1,63 @@
+# LexiSwitch workspace root.
+#
+# The three members are split by what each is allowed to call, per ADR-0001. The split is
+# enforced by this dependency graph rather than by convention: `lexiswitch-core` cannot
+# reach Win32 because it depends on nothing that can.
+
+[workspace]
+resolver = "2"
+members = [
+    "lexiswitch-core", # no Win32, #![forbid(unsafe_code)], all logic and tests
+    "lexiswitch-win",  # all Win32 FFI, all unsafe
+    "lexiswitch",      # thin binary: wiring, config, event loop
+]
+
+# Required, not tidiness. `spikes/` holds standalone cargo projects that are deliberately
+# not workspace members (see spike-windows-input-primitives/design.md). Cargo refuses to
+# build a workspace containing a package directory that is neither a member nor excluded,
+# so without this line the root build fails outright once the spikes exist. With it, the
+# guarantee spike task 5.4 asks for holds structurally: `cargo build` and
+# `cargo test --workspace` at the root cannot reach spike code.
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+# Nothing here is published. Beyond being true, this is what makes `private = { ignore =
+# true }` in deny.toml apply to these crates — cargo-deny keys that exemption off
+# `publish = false`, and without it every workspace crate fails the license check as
+# unlicensed. Verified against cargo-deny 0.20.2.
+publish = false
+
+[profile.release]
+# Required by task 1.1.
+lto = true
+panic = "abort"
+
+# Size, against the 5 MB budget. Both are pure wins here: a single codegen unit lets LLVM
+# optimize across the whole crate, and there is no crash reporting to want symbols for
+# (ADR-0005 — nothing derived from keystrokes reaches disk, and that includes dumps).
+codegen-units = 1
+strip = true
+
+# opt-level is left at the default 3 deliberately. "z" or "s" would trade speed for size,
+# but the binary's size is dominated by dependency count rather than codegen, and no
+# measurement exists yet to justify the trade. Revisit at task 10.3 if the budget is tight.
+
+# Note: cargo ignores `panic` for the test and bench profiles, so `panic = "abort"` here
+# does not break `#[should_panic]` tests under `cargo test --release`.
+
+# Dependencies are introduced by the task that first needs them, with the version pinned
+# at that point rather than guessed now:
+#
+#   windows  — task 5.1, with the feature set established by spike-windows-input-primitives.
+#              That feature set is an open question in the change's design.md and is not
+#              settled here.
+#   serde    — task 4.2, config types.
+#   toml     — task 4.2, config parsing.
+#   zeroize  — task 3.5, buffer hygiene.
+#
+# When adding them, prefer [workspace.dependencies] entries so the version is stated once.
+# Every addition is a binary-size and audit-surface decision; the dependency tree is meant
+# to stay small enough to read in full.

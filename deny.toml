@@ -1,0 +1,113 @@
+# Dependency policy for LexiSwitch.
+#
+# The no-network property is the reason this project exists rather than a preference, so it
+# is enforced mechanically here instead of by review discipline. See `openspec/config.yaml`
+# for the constraint and task 1.4 of `add-manual-layout-conversion` for the requirement that
+# this gate be *proven* to fail — add a networking dependency, watch `cargo deny check`
+# reject it, then remove it. An unproven gate is not a gate.
+#
+# What this cannot do, stated plainly: cargo-deny bans *crates*, not capabilities. Any crate
+# can open a `std::net::TcpStream` with no dependency at all, and nothing here would notice.
+# This gate catches the realistic failure — a dependency quietly pulling in an HTTP or TLS
+# stack — and makes the intent unambiguous to a reader. The claim in the README rests on
+# three things together: this file, a dependency tree small enough to read in full, and the
+# observed-no-traffic check in task 10.5. Not on this file alone.
+
+[graph]
+targets = [{ triple = "x86_64-pc-windows-msvc" }]
+
+# Evaluate every optional feature, not just the ones currently enabled. A dependency that
+# *can* turn on a networking feature is a dependency that will, eventually, by someone who
+# did not read this file. Expect this to occasionally reject a crate over a feature we never
+# enable; that is the intended trade, not a misconfiguration.
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Every ignore entry needs a comment saying why, and a reason to expect it to be removed.
+ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+# The workspace crates are unpublished and carry no license metadata of their own.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+
+# A wildcard version against a registry means "any version, including one published
+# tomorrow by whoever takes over the crate" — the supply-chain hazard this denies.
+wildcards = "deny"
+
+# Path dependencies are exempt, because that hazard does not exist for them: the workspace's
+# own crates are local, unpublished (`publish = false`), and pinned by being on disk. A
+# `version` field on them would be ceremony to keep in sync for no gain. The deny above
+# still applies in full to anything from crates.io.
+allow-wildcard-paths = true
+
+# Network-capable crates. Grouped by what they are, because the list is meant to be read and
+# extended rather than trusted blindly — if something reaches the network by a route not
+# covered below, the omission is a bug in this file.
+deny = [
+    # HTTP clients and servers.
+    { crate = "reqwest", reason = "HTTP client. LexiSwitch makes no network requests." },
+    { crate = "hyper", reason = "HTTP implementation. LexiSwitch makes no network requests." },
+    { crate = "h2", reason = "HTTP/2 implementation, and a route to hyper." },
+    { crate = "ureq", reason = "HTTP client." },
+    { crate = "attohttpc", reason = "HTTP client." },
+    { crate = "isahc", reason = "HTTP client." },
+    { crate = "minreq", reason = "HTTP client." },
+    { crate = "surf", reason = "HTTP client." },
+    { crate = "curl", reason = "HTTP client." },
+    { crate = "curl-sys", reason = "libcurl bindings — the FFI route around the curl crate." },
+
+    # Sockets. These are the chokepoint nearly every networking stack funnels through, so
+    # denying them catches clients this list does not name individually.
+    { crate = "socket2", reason = "Raw socket construction." },
+    { crate = "mio", reason = "Non-blocking socket I/O." },
+
+    # TLS. Present only to talk to something remote.
+    { crate = "native-tls", reason = "TLS — only useful for a remote endpoint." },
+    { crate = "openssl", reason = "TLS." },
+    { crate = "openssl-sys", reason = "TLS, via FFI." },
+    { crate = "rustls", reason = "TLS." },
+
+    # WebSockets and DNS.
+    { crate = "tungstenite", reason = "WebSocket implementation." },
+    { crate = "tokio-tungstenite", reason = "WebSocket implementation." },
+    { crate = "hickory-resolver", reason = "DNS resolver." },
+    { crate = "trust-dns-resolver", reason = "DNS resolver (former name of hickory)." },
+
+    # Async runtimes with networking built in. `tokio` itself is handled by the feature ban
+    # below rather than an outright deny, per task 1.3 — but note that nothing in the design
+    # calls for an async runtime at all. Two threads and a channel (see the change's
+    # design.md) is the whole concurrency model. If tokio ever appears in the tree, the
+    # question to ask is why, not which features it enabled.
+    { crate = "async-std", reason = "Async runtime with networking; no async runtime is planned." },
+]
+
+# tokio is permitted only with its networking, process-spawning, and signal features off.
+[[bans.features]]
+crate = "tokio"
+deny = ["net", "process", "signal"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# No git dependencies. A git source is a moving target that no lockfile audit covers as well
+# as a published version does.
+allow-git = []

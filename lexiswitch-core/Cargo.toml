@@ -1,0 +1,12 @@
+[package]
+name = "lexiswitch-core"
+description = "Layout conversion, keystroke buffer, cycling, and config types. No OS dependency."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Deliberately empty, and the emptiness is the point (ADR-0001): this crate cannot reach
+# Win32 because it depends on nothing that can. Anything added here must build and test on
+# a machine with no Windows APIs present.
+[dependencies]

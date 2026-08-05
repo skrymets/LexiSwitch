@@ -1,0 +1,41 @@
+schema: spec-driven
+
+context: |
+  LexiSwitch — an offline keyboard-layout correction utility for Windows 11.
+
+  Problem: typing Ukrainian words while an English or German layout is active
+  produces garbage like "ауфегкуі". LexiSwitch converts it back. It exists as a
+  replacement for Punto Switcher (a Yandex product) whose global keystroke
+  interception is not an acceptable trade.
+
+  Tech stack: Rust 2021, Cargo workspace of three crates.
+    lexiswitch-core  pure Rust, no Win32, #![forbid(unsafe_code)], all logic and tests
+    lexiswitch-win   all Win32 FFI via the `windows` crate, all unsafe
+    lexiswitch       thin binary: wiring, config, event loop
+
+  Hard constraints:
+    - Binary under 5 MB; resident memory under 20 MB.
+    - No network capability, ever. Network-capable dependencies denied via cargo-deny.
+    - No telemetry, no update checker, no crash reporting.
+    - Nothing derived from keystrokes reaches disk — not config, not logs, not dumps.
+    - Keystrokes are observed via Raw Input (RIDEV_INPUTSINK), which cannot block or
+      alter input. SetWindowsHookEx is not called anywhere and no abstraction is
+      provided that would make adding it easy.
+
+  Architecture decisions live in docs/adr/ (ADR-0001..0009). Reference them by number
+  rather than restating their reasoning. Changing a recorded decision requires a new
+  superseding ADR.
+
+  Conventions:
+    - Commits are feature-sized, describe the change only, and carry no attribution
+      or generation trailers.
+    - Every unsafe block carries a comment stating the invariant it upholds.
+    - Logging records event kinds and lengths, never key content, and is off by default.
+
+rules:
+  design:
+    - Link to the relevant ADR in docs/adr/ instead of re-arguing a settled decision.
+    - Call out unresolved assumptions explicitly rather than writing around them.
+  tasks:
+    - lexiswitch-core work is test-first; its tests must not require Windows.
+    - Sequence tasks so each milestone is independently verifiable by running something.

@@ -1,0 +1,13 @@
+[package]
+name = "lexiswitch"
+description = "Offline keyboard-layout correction for Windows 11."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+lexiswitch-core = { path = "../lexiswitch-core" }
+lexiswitch-win = { path = "../lexiswitch-win" }
+
+# serde + toml arrive at task 4.2 (config), once there is a config to parse.

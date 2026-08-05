@@ -11,9 +11,10 @@
 // The boundary ADR-0001 draws, stated to the compiler rather than to the reader.
 #![forbid(unsafe_code)]
 
+pub mod convert;
+pub mod layout;
+
 // Modules arrive with the tasks that implement them, test-first:
-//   layout.rs     task 2.2   LayoutTable, forward and reverse maps
-//   convert.rs    task 2.4   position-based conversion
 //   buffer.rs     task 3.2   KeyBuffer, the 64-entry ring
 //   cycle.rs      task 3.10  candidate selection and multi-tap cycling
 //   config.rs     task 4.2   config types, defaults, validation

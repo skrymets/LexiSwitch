@@ -3,6 +3,13 @@
 **/*.rs.bk
 *.pdb
 
+# Diagnostic captures. The debug-only LEXISWITCH_DIAG output prints keystroke content, and
+# redirecting it to a file is how something derived from typing ends up on disk — which
+# ADR-0005 forbids outright. Ignored so a captured session cannot be committed by accident;
+# delete these rather than keeping them.
+diag*.txt
+*.diag
+
 .claude
 CLAUDE.md
 

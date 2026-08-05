@@ -10,3 +10,10 @@ publish.workspace = true
 # Win32 because it depends on nothing that can. Anything added here must build and test on
 # a machine with no Windows APIs present.
 [dependencies]
+
+[dev-dependencies]
+# Test-only, and the distinction matters. In production `lexiswitch-win` probes
+# `ToUnicodeEx` and hands this crate plain data — JSON never appears at runtime, so a JSON
+# parser must never reach the shipped binary or the 5 MB budget. `LayoutTable` therefore
+# takes plain entries, and reading fixtures is something only the tests know how to do.
+serde_json = "1"

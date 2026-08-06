@@ -50,8 +50,8 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 - [x] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
 - [ ] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
 - [ ] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)
-- [ ] 6.5 Rewrite the manual checklist for the reduced product and execute it (migrated from 10.7)
-- [ ] 6.6 **Experiment:** run the release build and check the CrowdStrike event log. Record the outcome either way — a still-quarantined binary means the block was never attributable to capture, and the pivot's endpoint-protection criterion needs rethinking rather than retrying
+- [x] 6.5 Rewrite the manual checklist for the reduced product and execute it (migrated from 10.7)
+- [x] 6.6 **Experiment:** run the release build before and after the removal and record whether it is blocked. Outcome: **not blocked either way** — the 2026-08-05 block does not reproduce, so there was no failing baseline to improve on and the brief's §22 endpoint-protection criterion cannot be met by this work. Recorded in `docs/manual-tests.md`; the Falcon console itself is not readable from here, so "launches and is not quarantined" is the observable used
 
 ## 7. Close out the superseded change
 

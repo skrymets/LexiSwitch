@@ -15,83 +15,74 @@ Run the release build unless a step says otherwise. Record the date and the outc
 step — including the ones that pass, because "we ran it and it worked" and "we never got to
 it" are indistinguishable in an empty results section.
 
+Rewritten 2026-08-07 for the reduced product. Steps covering last-word correction, clipboard
+conversion, multi-tap cycling, password-field detection, the exclusion list and pause/resume
+are gone because the features are ([ADR-0011](adr/0011-no-keyboard-observation.md),
+[ADR-0012](adr/0012-single-chooser-transaction.md)). What those steps *found* is kept below,
+under its original dates — an observation stays true even when the thing it observed has been
+removed.
+
 ```powershell
 cargo build --release
-.\target\release\lexiswitch.exe
+.	arget
+elease\lexiswitch.exe
 ```
 
 ### Setup
 
-- [ ] Two or more keyboard layouts installed; the program refuses to start otherwise.
+- [ ] Two or more keyboard layouts installed.
 - [ ] Tray icon appears, and its tooltip reads `LexiSwitch`.
-- [ ] Startup balloon names the hotkey for last-word correction.
+- [ ] Startup balloon names the selection hotkey.
 - [ ] No console window appears (release build only).
+- [ ] **Check for a stale instance first.** A hotkey held by an earlier copy of the program
+      makes registration fail, which ends startup — see the 2026-08-07 note below. Confirm no
+      `lexiswitch.exe` is already running before concluding anything about a failure to start.
 
-### Last-word correction — one row per application
+### Selection conversion
 
-For each: type the `test` keys with the **Ukrainian** layout active so the screen shows
-`еуіе`, press the last-word hotkey, and confirm it becomes `test`. Then press it again
-within 500 ms and confirm the cycle advances.
-
-| Application                           | Converts | Cycles | Notes                                                                           |
-|---------------------------------------|----------|--------|---------------------------------------------------------------------------------|
-| Notepad                               | ☐       | ☐     | Native baseline; everything should work                                         |
-| Word                                  | ☐       | ☐     | Rich text, autocorrect may interfere                                            |
-| Chrome (address bar and a text field) | ☐       | ☐     |                                                                                 |
-| VS Code                               | ☐       | ☐     | Electron with good accessibility                                                |
-| Windows Terminal                      | ☐       | ☐     | **Excluded by default** — expect a no-op unless removed from the exclusion list |
-| Telegram                              | ☐       | ☐     | Electron chat client                                                            |
-
-- [ ] Pressing the hotkey with nothing recently typed shows "Nothing to correct" rather than
-      doing something arbitrary.
-- [ ] Pressing the hotkey after 30 s of not typing does the same — the buffer has gone stale.
-- [ ] Typing a word, pressing Enter, then pressing the hotkey is a no-op. Enter wipes.
-- [ ] **Do not press another key immediately after the hotkey.** A keystroke landing within
-      ~300 ms can be processed inside the injected sequence — see the race section below.
-
-### Selection conversion (task 8.6)
-
-- [ ] **VS Code** — select mistyped text, press the selection hotkey. Converts in place, and
-      the clipboard still holds whatever it held before.
-- [ ] **Windows Terminal** — same, exercising the clipboard fallback. Clipboard restored.
-- [ ] With an **image** on the clipboard, run the fallback path. The image is lost, and the
-      tray says so. (Expected: text-only restore is deliberate.)
-- [ ] Set `allow_clipboard_fallback = false`, retry in Windows Terminal. Reports
+- [ ] **Notepad** — select mistyped text, press the selection hotkey. Converts in place.
+- [ ] The clipboard still holds whatever it held before the conversion.
+- [ ] **One** `Ctrl+Z` reverts the whole conversion, not one character of it.
+- [ ] **Notepad++** — same, exercising the clipboard read path (it exposes no text pattern).
+- [ ] **A browser text field** — same. Run it twice: the read path may differ between runs,
+      and both must work.
+- [ ] With an **image** on the clipboard, convert a selection. The image is lost and the tray
+      says so. Text-only restore is deliberate.
+- [ ] With plain text on the clipboard, convert a selection. The tray stays **silent** — the
+      notice fires only when something was actually destroyed.
+- [ ] Set `allow_clipboard_fallback = false`, retry where no text pattern exists. Reports
       "does not expose its selection" rather than silently using the clipboard.
 
-### Clipboard conversion
+### Configuration migration
 
-- [ ] Copy mistyped text, press the clipboard hotkey. The clipboard now holds the converted
-      text, and **nothing was pasted anywhere**.
-- [ ] With a non-text clipboard, the same hotkey reports "holds no text".
+- [ ] Start with a config file from the previous version. The program **starts**, and a
+      balloon names the settings it ignored.
+- [ ] Introduce a typo in a key name. It appears in the same report, so a misspelling and a
+      removed setting are told apart by reading, not by guessing.
+- [ ] Saving a syntax error is refused, names the line, and the previous settings stay in
+      effect.
 
-### Containment (section 7)
+### The agent
 
-- [ ] Focus a password field in Chrome, type, press the hotkey — no-op, nothing recorded.
-- [ ] Same in a password manager (listed in the default exclusions).
-- [ ] Same in Windows Terminal at a `sudo` prompt — protected by the exclusion list, since
-      detection cannot see it.
-- [ ] `probe_focus` reports `YES via UIAutomation` for each field above where possible.
-- [ ] Pause via the tray, type, resume: nothing typed while paused is recoverable.
-
-### The agent (section 9)
-
-- [ ] Tray menu opens on right-click and offers Pause, Reload, Open configuration, Quit.
-- [ ] Icon changes visibly between active and paused.
+- [ ] Tray menu opens on right-click and offers Disable, Reload, Open configuration, Quit.
+- [ ] **Disable, then press the hotkey with text selected: nothing converts.** Enable, press
+      again: it converts. The icon changes visibly between the two states.
+- [ ] The disabled tooltip says the hotkey does not convert — not that recording stopped.
 - [ ] "Open configuration file" creates `%APPDATA%\LexiSwitch\config.toml` when absent and
       opens it.
 - [ ] Editing and saving the file applies within ~2 s, with a confirming balloon.
-- [ ] Saving a file with `respect_password_fields = false` is **refused**, names the line,
-      and the previous settings stay in effect.
-- [ ] Saving a syntax error does the same.
-- [ ] Changing a hotkey re-registers it; the old binding stops working, the new one works.
-- [ ] Quit from the tray menu leaves no `lexiswitch.exe` in Task Manager, and the hotkeys
-      are free for another application to claim.
+- [ ] Changing the hotkey re-registers it; the old binding stops working, the new one works.
+- [ ] Quit leaves no `lexiswitch.exe` running, and the hotkey is free for another application.
 
-### Budgets
+### Budgets and absence
 
-- [ ] Idle for an hour: resident memory under 20 MB (`Get-Process lexiswitch`).
+- [ ] Idle for an hour: resident memory under 20 MB (`Get-Process lexiswitch`). Startup is
+      measured at 13.1 MB.
 - [ ] No outbound connection during an extended session (`resmon`, filtered to the process).
+- [ ] The release binary contains none of `RegisterRawInputDevices`, `GetRawInputData`,
+      `RIDEV_INPUTSINK`, `SetWindowsHookEx`, `CallNextHookEx` — and does contain `SendInput`
+      and `RegisterHotKey`, which is what proves the search works.
+- [ ] The release build launches and is not quarantined.
 
 ---
 
@@ -353,6 +344,35 @@ on zero matches. Symbols the program certainly does call are searched the same w
 presence is what makes the absences meaningful.
 
 Binary is 0.54 MB against the 5 MB budget, down from 0.57 MB.
+
+---
+
+### The endpoint-protection experiment, after the removal
+
+**Observed 2026-08-07**, on the release build with keystroke capture removed. It launches,
+runs, and is not quarantined. Working set 13.8 MB.
+
+Set against the pre-removal baseline recorded below, this is a null result, and it is worth
+being precise about why rather than reporting it as a pass:
+
+| | Runs? | Quarantined? |
+|---|---|---|
+| Before removal (2026-08-07) | yes | no |
+| After removal (2026-08-07) | yes | no |
+
+**Nothing was fixed, because nothing was broken at the time of measurement.** The pivot brief
+§22 lists "the release build is not blocked because of typing-monitor behaviour" as a
+completion criterion, and that criterion cannot be met by this work — not because the work
+failed, but because there was no failing baseline for it to improve on. The 2026-08-05 block
+was real and is recorded below; it simply does not reproduce, and whether the policy changed,
+the rebuilt binary carries a different verdict, or the original detection was build-specific
+cannot be separated from here.
+
+What this *does* establish is a regression check: removing capture did not make the binary
+look worse to endpoint protection. Keep running it; treat a future block as new information
+rather than as the return of a known problem, since the attributes that plausibly caused the
+original one — unsigned, zero prevalence, optimised, stripped, console-less, registering a
+global hotkey, calling `SendInput` — all survive the pivot untouched.
 
 ---
 

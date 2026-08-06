@@ -16,7 +16,8 @@
 
 use std::{thread, time::Duration};
 
-use lexiswitch_win::focus::PasswordGate;
+use lexiswitch_win::focus::{process_name, Uia};
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::Win32::UI::Accessibility::{IUIAutomationTextPattern, UIA_TextPatternId};
 
 /// How far the automation read got before giving up.
@@ -53,8 +54,8 @@ impl Reach {
     }
 }
 
-fn probe(gate: &PasswordGate) -> Reach {
-    let Some(automation) = gate.automation() else {
+fn probe(uia: Option<&Uia>) -> Reach {
+    let Some(automation) = uia.and_then(|u| u.automation()) else {
         return Reach::NoAutomation;
     };
 
@@ -92,7 +93,7 @@ fn probe(gate: &PasswordGate) -> Reach {
 }
 
 fn main() {
-    let mut gate = PasswordGate::new();
+    let uia = Uia::new();
 
     println!("probe_selection — the path convert_selection would take, twice a second.");
     println!("Select text in the target application. Focus the target, not this console.");
@@ -102,11 +103,9 @@ fn main() {
 
     let mut last = String::new();
     loop {
-        // Focus can change without this process seeing an event, so the cache is dropped each
-        // round — the point here is accuracy, not the message loop's latency budget.
-        gate.invalidate();
-        let process = gate.current().process.clone();
-        let reach = probe(&gate);
+        // SAFETY: no preconditions; a null handle when nothing is focused is a valid answer.
+        let process = process_name(unsafe { GetForegroundWindow() });
+        let reach = probe(uia.as_ref());
 
         let line = format!(
             "{:<28} {:<12} {}",

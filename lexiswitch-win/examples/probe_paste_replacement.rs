@@ -23,7 +23,7 @@ macro_rules! say {
 }
 
 use lexiswitch_win::clipboard::Clipboard;
-use lexiswitch_win::focus::{PasswordGate, Uia};
+use lexiswitch_win::focus::{process_name, Uia};
 use lexiswitch_win::inject::{self, FocusGuard};
 use lexiswitch_win::{layouts, selection};
 use windows::Win32::Foundation::HWND;
@@ -31,6 +31,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_A,
     VK_CONTROL, VK_N, VK_Z,
 };
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Typed with the Ukrainian layout active while intending English.
 const SOURCE: &str = "Еуіе ша іудусеув еуче ьфн иу екфтідшеукфеув ифсл ещ еру сщккусе дщсфду";
@@ -51,7 +52,7 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
                 wScan: 0,
                 dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
                 time: 0,
-                dwExtraInfo: inject::SYNTHETIC_MARKER as usize,
+                dwExtraInfo: 0,
             },
         },
     }
@@ -65,7 +66,7 @@ fn chord(vk: VIRTUAL_KEY) {
         key(VK_CONTROL, true),
     ];
     // SAFETY: a live slice of fully-initialised INPUT structures with the element size the API
-    // requires. Carries the synthetic marker, as everything this crate sends does.
+    // requires.
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
@@ -126,10 +127,11 @@ fn document_is_empty() -> bool {
     }
 }
 
-fn wait_for_target(gate: &mut PasswordGate, process: &str) -> bool {
+fn wait_for_target(process: &str) -> bool {
     for _ in 0..40 {
-        gate.invalidate();
-        if gate.current().process.eq_ignore_ascii_case(process) {
+        // SAFETY: no preconditions; a null handle when nothing is focused is a valid answer.
+        let hwnd = unsafe { GetForegroundWindow() };
+        if process_name(hwnd).eq_ignore_ascii_case(process) {
             return true;
         }
         thread::sleep(Duration::from_millis(250));
@@ -189,14 +191,13 @@ fn main() {
     if uia.is_none() {
         say!("no automation interface — the clipboard read branch will be taken.");
     }
-    let mut gate = PasswordGate::new();
 
     say!("probe_paste_replacement — launching {target}");
     if std::process::Command::new(&target).spawn().is_err() {
         say!("could not launch {target}");
         return;
     }
-    if !wait_for_target(&mut gate, &process) {
+    if !wait_for_target(&process) {
         say!("{process} did not reach the foreground; nothing was typed.");
         return;
     }

@@ -10,15 +10,15 @@ fallout from an earlier one.
 
 ## 2. Retire capture and cycling
 
-- [ ] 2.1 Delete `lexiswitch-win/src/rawinput.rs` and its module declaration
-- [ ] 2.2 Delete `lexiswitch-win/src/pagelock.rs` and its module declaration
-- [ ] 2.3 Delete `lexiswitch-core/src/buffer.rs` and `lexiswitch-core/src/cycle.rs` and their module declarations
-- [ ] 2.4 Delete `lexiswitch-core/tests/{buffer,cycling,extraction,invalidation}.rs`
-- [ ] 2.5 Remove `PasswordGate`, `inspect`, `FocusInfo` and `Detection` from `lexiswitch-win/src/focus.rs`, keeping `Uia` and `process_name`
-- [ ] 2.6 Remove `inject::replace` and `SYNTHETIC_MARKER` from `lexiswitch-win/src/inject.rs`, keeping `paste`, `copy_selection` and `FocusGuard`
-- [ ] 2.7 Update the four `examples/probe_*.rs` that use `PasswordGate` as a foreground-process helper to use `process_name` instead
-- [ ] 2.8 Delete `lexiswitch-win/examples/probe_focus.rs`, whose only purpose was measuring password-field detection
-- [ ] 2.9 `cargo clippy --workspace --all-targets` clean; conversion tests unchanged and green
+- [x] 2.1 Delete `lexiswitch-win/src/rawinput.rs` and its module declaration
+- [x] 2.2 Delete `lexiswitch-win/src/pagelock.rs` and its module declaration
+- [x] 2.3 Delete `lexiswitch-core/src/buffer.rs` and `lexiswitch-core/src/cycle.rs` and their module declarations
+- [x] 2.4 Delete `lexiswitch-core/tests/{buffer,cycling,extraction,invalidation}.rs`
+- [x] 2.5 Remove `PasswordGate`, `inspect`, `FocusInfo` and `Detection` from `lexiswitch-win/src/focus.rs`, keeping `Uia` and `process_name`
+- [x] 2.6 Remove `inject::replace` and `SYNTHETIC_MARKER` from `lexiswitch-win/src/inject.rs`, keeping `paste`, `copy_selection` and `FocusGuard`
+- [x] 2.7 Update the four `examples/probe_*.rs` that use `PasswordGate` as a foreground-process helper to use `process_name` instead
+- [x] 2.8 Delete `lexiswitch-win/examples/probe_focus.rs`, whose only purpose was measuring password-field detection
+- [x] 2.9 `cargo clippy --workspace --all-targets` clean; conversion tests unchanged and green
 
 ## 3. Configuration
 
@@ -40,13 +40,13 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 
 ## 5. Prove the absence
 
-- [ ] 5.1 `cargo build --release`; confirm the binary stays under 5 MB
-- [ ] 5.2 Search the release binary for `RegisterRawInputDevices`, `RIDEV` and `SetWindowsHookEx`; none may appear
-- [ ] 5.3 Record the result in `docs/manual-tests.md` as the evidence for the pivot's no-observation invariant
+- [x] 5.1 `cargo build --release`; confirm the binary stays under 5 MB
+- [x] 5.2 Search the release binary for `RegisterRawInputDevices`, `RIDEV` and `SetWindowsHookEx`; none may appear
+- [x] 5.3 Record the result in `docs/manual-tests.md` as the evidence for the pivot's no-observation invariant
 
 ## 6. Verification
 
-- [ ] 6.1 `cargo test --workspace` green, with only the deleted suites missing
+- [x] 6.1 `cargo test --workspace` green, with only the deleted suites missing
 - [ ] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
 - [ ] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
 - [ ] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)

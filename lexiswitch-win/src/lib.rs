@@ -4,12 +4,16 @@
 //! hunted for. The security argument this project rests on is one a reader can check, which
 //! only holds if the surface to check is small and in one place.
 //!
-//! Keystrokes are observed through Raw Input (`RIDEV_INPUTSINK`), an API with no capability
-//! to block or alter a keystroke. `SetWindowsHookEx` is not called anywhere in this crate,
-//! and no abstraction is provided that would make adding it a small change ([ADR-0003]).
+//! **Nothing here observes the keyboard.** There is no Raw Input registration and no
+//! `SetWindowsHookEx` call, and no abstraction is provided that would make adding either a
+//! small change ([ADR-0011]). Keys reach this program only as an ordinary focused window
+//! receives them, and only while a window it owns has focus.
+//!
+//! That prohibition is not only a privacy property. A chooser that avoided taking focus would
+//! need exactly the hook forbidden here, which is why the interface has the shape it does.
 //!
 //! [ADR-0001]: ../../docs/adr/0001-windows-first-with-os-free-core.md
-//! [ADR-0003]: ../../docs/adr/0003-raw-input-over-low-level-hook.md
+//! [ADR-0011]: ../../docs/adr/0011-no-keyboard-observation.md
 
 // Requires the `unsafe` keyword on operations inside an `unsafe fn` rather than letting the
 // function signature blanket them. Without this, an unsafe operation can be added to an
@@ -28,8 +32,6 @@ pub mod hotkey;
 pub mod inject;
 pub mod langswitch;
 pub mod layouts;
-pub mod pagelock;
-pub mod rawinput;
 pub mod selection;
 pub mod tray;
 pub mod window;

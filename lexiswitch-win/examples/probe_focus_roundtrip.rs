@@ -30,7 +30,7 @@ macro_rules! say {
 
 use lexiswitch_win::clipboard::Clipboard;
 use lexiswitch_win::focus::{process_name, Uia};
-use lexiswitch_win::inject::{self, FocusGuard, SYNTHETIC_MARKER};
+use lexiswitch_win::inject::{self, FocusGuard};
 use lexiswitch_win::selection;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -62,7 +62,7 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
                 wScan: 0,
                 dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
                 time: 0,
-                dwExtraInfo: SYNTHETIC_MARKER as usize,
+                dwExtraInfo: 0,
             },
         },
     }
@@ -76,7 +76,7 @@ fn chord(vk: VIRTUAL_KEY) {
         key(VK_CONTROL, true),
     ];
     // SAFETY: a live slice of fully-initialised INPUT structures with the element size the API
-    // requires. Carries the synthetic marker, as everything this crate sends does.
+    // requires.
     unsafe {
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }

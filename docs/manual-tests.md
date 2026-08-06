@@ -327,6 +327,35 @@ manual testing.
 > [`environment.md`](environment.md) §6 on the grounds that the binary is not distributed,
 > is a plausible cause that the pivot does not touch.
 
+### No keyboard-observation capability survives in the release binary
+
+**Observed 2026-08-07**, after `retire-keystroke-capture` removed the capture subsystem. This
+is the evidence for the pivot's invariant that a release build contains no active general
+keystroke-monitoring subsystem, and for the standard
+[ADR-0011](adr/0011-no-keyboard-observation.md) inherits from ADR-0003: a reader auditing the
+binary can confirm it rather than taking the source on trust.
+
+Searched `target\release\lexiswitch.exe`:
+
+```
+must be ABSENT                          control: must be PRESENT
+  RegisterRawInputDevices   absent        SendInput          present
+  GetRawInputData           absent        SetClipboardData   present
+  RIDEV_INPUTSINK           absent        RegisterHotKey     present
+  SetWindowsHookEx          absent        OpenClipboard      present
+  CallNextHookEx            absent
+```
+
+**The control column is the point.** A search that only ever reports "absent" cannot
+distinguish a genuine removal from a search that was never working — the first attempt at this
+check was in fact broken, reporting every symbol as present because `grep -c` exits non-zero
+on zero matches. Symbols the program certainly does call are searched the same way, and their
+presence is what makes the absences meaningful.
+
+Binary is 0.54 MB against the 5 MB budget, down from 0.57 MB.
+
+---
+
 ### The release build now runs; the block does not reproduce
 
 **Observed 2026-08-07**, as the pre-removal baseline for the pivot's endpoint-protection

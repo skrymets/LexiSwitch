@@ -327,6 +327,38 @@ manual testing.
 > [`environment.md`](environment.md) §6 on the grounds that the binary is not distributed,
 > is a plausible cause that the pivot does not touch.
 
+### The release build now runs; the block does not reproduce
+
+**Observed 2026-08-07**, as the pre-removal baseline for the pivot's endpoint-protection
+experiment. `target\release\lexiswitch.exe` launches, stays running, and is not quarantined.
+Working set at startup is **13.1 MB**, against the 20 MB budget.
+
+The 2026-08-05 *"Access is denied"* does not reproduce. Three explanations fit and this
+observation cannot separate them: CrowdStrike's policy or exclusions changed in the interim,
+the binary was rebuilt and the new one carries a different verdict, or the original detection
+was specific to that build. Nothing here says the block will not return.
+
+**A first attempt did fail, for an unrelated reason worth recording separately.** The release
+build exited with code 1, and the debug build — which has a console — named the cause:
+
+```
+lexiswitch: hotkey convert_last_word could not be registered: Hot key is already registered.
+```
+
+A debug instance left running from the previous day held `Pause`. Once it was stopped, the
+release build started normally. Two things follow. Exit code 1 at startup is not evidence of
+endpoint protection, and anyone testing this must check for a stale instance first. And this
+is the fatal-hotkey-conflict behaviour demonstrated live rather than argued: a combination held
+by *anything*, including a forgotten copy of the program itself, ends the process with no
+window, no tray icon, and no way to choose another. That is the condition
+`rework-shortcut-and-shell` exists to remove.
+
+**Consequence for the pivot.** §22's criterion — "the release build is not blocked because of
+typing-monitor behaviour in the tested endpoint-protection environment" — currently has no
+failing baseline to improve on. Removing keystroke capture cannot be shown to fix something
+that is not presently broken. Re-test after the removal to confirm it stays unblocked, but do
+not expect the removal to demonstrate a benefit.
+
 ---
 
 ## Elevated windows (spike 1)

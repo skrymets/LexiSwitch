@@ -141,10 +141,13 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>) {
                 allow_clipboard,
                 5,
             ) {
-                Ok(done) if done.clipboard_disturbed => Outcome::Note {
+                // Only when something was actually destroyed. Every conversion goes through
+                // the clipboard now (ADR-0010), so announcing that it did would be a
+                // notification on every single use and would train the user to dismiss it.
+                Ok(done) if done.lost_nontext => Outcome::Note {
                     title: "Selection converted".into(),
-                    body: "Used the clipboard, so any image or formatted content that was on \
-                           it has been lost. Text was restored."
+                    body: "The clipboard held an image or formatted content, which the \
+                           conversion destroyed. Text on it was restored."
                         .into(),
                 },
                 Ok(_) => Outcome::Quiet,
@@ -181,7 +184,10 @@ fn convert_clipboard(from: &LayoutTable, to: &LayoutTable) -> Outcome {
         };
     };
     match lexiswitch_core::convert::convert(&text, from, to) {
-        Some(converted) => match clip.set_text(&converted) {
+        // Excluded: this is text the program derived, and Clipboard History persists what it
+        // is shown. The restore path in `selection` deliberately does not exclude, because
+        // what it puts back is the user's own.
+        Some(converted) => match clip.set_text_excluded(&converted) {
             Ok(()) => Outcome::Note {
                 title: "Clipboard converted".into(),
                 body: format!("Converted to {} in place. Nothing was pasted.", to.name()),

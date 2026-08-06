@@ -21,7 +21,7 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    VIRTUAL_KEY, VK_BACK, VK_C, VK_CONTROL,
+    VIRTUAL_KEY, VK_BACK, VK_C, VK_CONTROL, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -122,10 +122,31 @@ pub fn replace(guard: &FocusGuard, backspaces: usize, text: &str) -> Result<(), 
 /// Carries the same synthetic marker as everything else this module sends, so our own Raw
 /// Input registration ignores it.
 pub fn copy_selection() -> Result<(), Abandoned> {
+    chord(VK_C)
+}
+
+/// Send Ctrl+V, to make the target paste over its selection.
+///
+/// This is how a selection is replaced ([ADR-0010](../../docs/adr/0010-paste-selection-replacement.md)):
+/// four events regardless of how much text is being delivered, applied by the target as a
+/// single edit. [`replace`] remains for last-word correction, which needs backspaces that a
+/// paste cannot supply.
+///
+/// Refuses to act if focus has moved since `guard` was captured — pasting into the wrong
+/// window destroys whatever was selected there.
+pub fn paste(guard: &FocusGuard) -> Result<(), Abandoned> {
+    if !guard.unchanged() {
+        return Err(Abandoned::FocusMoved);
+    }
+    chord(VK_V)
+}
+
+/// Send Ctrl+<vk> as a press-and-release pair around the modifier.
+fn chord(vk: VIRTUAL_KEY) -> Result<(), Abandoned> {
     let inputs = [
         key(VK_CONTROL, false),
-        key(VK_C, false),
-        key(VK_C, true),
+        key(vk, false),
+        key(vk, true),
         key(VK_CONTROL, true),
     ];
     // SAFETY: a live slice of fully-initialised INPUT structures with the element size the

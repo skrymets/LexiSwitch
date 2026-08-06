@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR-0010](0010-paste-selection-replacement.md)
+
+The **read** strategy below stands unchanged: UI Automation `TextPattern` first, clipboard
+round-trip as fallback. What ADR-0010 replaces is how the converted text is *written* back —
+by pasting rather than by synthesising keystrokes — and with it the claim in "Consequences"
+that the automation path never touches the clipboard. It now does.
 
 ## Context
 

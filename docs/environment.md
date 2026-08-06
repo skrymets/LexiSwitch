@@ -161,14 +161,14 @@ field detection, selection conversion across accessibility implementations, and 
 into real applications. Each application in this list exists to exercise a distinct code
 path, not for redundancy:
 
-| Application | What it exercises |
-|---|---|
-| Notepad | Native Win32 edit control — the baseline where everything should work |
-| Windows Terminal | No usable text pattern; forces the clipboard fallback |
-| VS Code | Electron with a good accessibility implementation |
-| Chrome or Firefox | Browser password fields — the weakest point in detection |
+| Application                               | What it exercises                                                          |
+|-------------------------------------------|----------------------------------------------------------------------------|
+| Notepad                                   | Native Win32 edit control — the baseline where everything should work      |
+| Windows Terminal                          | No usable text pattern; forces the clipboard fallback                      |
+| VS Code                                   | Electron with a good accessibility implementation                          |
+| Chrome or Firefox                         | Browser password fields — the weakest point in detection                   |
 | A password manager (KeePassXC, 1Password) | Native password field, and the case where a detection failure matters most |
-| Telegram or similar | Electron chat client, the common real-world typing target |
+| Telegram or similar                       | Electron chat client, the common real-world typing target                  |
 
 Confirm what is installed before task 7.4. A gap in the matrix means a gap in the
 password-detection coverage measurement, which is the one measurement the privacy model
@@ -188,9 +188,19 @@ LexiSwitch itself runs unelevated.
 
 ## 6. IDE
 
-RustRover, with its Index MCP server on `http://127.0.0.1:29178/index-mcp/streamable-http`.
-Registered for this project as `rustrover-index` (project-scoped, so the global
-`intellij-index` entry pointing at IntelliJ IDEA on 29170 is untouched).
+RustRover, serving two MCP endpoints. Both are registered for this project at local scope,
+so the global `intellij-index` / `intellij-debugger` entries pointing at IntelliJ IDEA
+(29170 and 29190) are untouched:
+
+| Server               | Endpoint                                              | Use                               |
+|----------------------|-------------------------------------------------------|-----------------------------------|
+| `rustrover-index`    | `http://127.0.0.1:29178/index-mcp/streamable-http`    | Code navigation and refactoring   |
+| `rustrover-debugger` | `http://127.0.0.1:29198/debugger-mcp/streamable-http` | Interacting with the IDE debugger |
+
+Both ports are served by the same RustRover process. The IDEA entries refuse connections
+whenever IDEA is not running, which looks identical to a broken RustRover setup — check
+the port before concluding anything is wrong. Registering a server does not make its tools
+available to an already-running Claude Code session; that needs a restart or `/mcp`.
 
 Not a build requirement — everything builds from the command line.
 

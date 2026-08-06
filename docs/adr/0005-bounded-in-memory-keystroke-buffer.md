@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0011](0011-no-keyboard-observation.md)
+
+The buffer and every rule below exist to contain captured keystrokes. Nothing is captured any
+more, so there is nothing to contain.
 
 ## Context
 

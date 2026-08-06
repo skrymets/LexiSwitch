@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0012](0012-single-chooser-transaction.md)
+
+One part survives: every candidate is rendered from the retained original text rather than
+from the previous result. ADR-0012 carries that forward. The repeated-press mechanism does not.
 
 ## Context
 

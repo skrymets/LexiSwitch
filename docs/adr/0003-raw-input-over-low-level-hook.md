@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR-0011](0011-no-keyboard-observation.md)
+
+The **decision** below — observe through Raw Input rather than a hook — retires with keyboard
+observation itself. The **prohibition** on `SetWindowsHookEx` does not: ADR-0011 carries it
+forward and widens it, and it now constrains the user interface as well as the privacy model.
 
 ## Context
 

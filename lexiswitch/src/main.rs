@@ -20,7 +20,7 @@ use lexiswitch_core::config::Config;
 use lexiswitch_core::layout::LayoutTable;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
 use lexiswitch_win::layouts::{self, InstalledLayout};
-use lexiswitch_win::tray::{MenuCommand, Tray, WM_TRAY};
+use lexiswitch_win::tray::{MenuCommand, State, Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
 use windows::Win32::UI::WindowsAndMessaging::{WM_COMMAND, WM_HOTKEY, WM_RBUTTONUP};
 
@@ -89,7 +89,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Whether the hotkey converts. Replaces the old paused state, which referred to keystroke
     // recording that no longer happens.
-    let mut enabled = true;
+    let mut state = State::Enabled;
 
     // --- the worker ----------------------------------------------------------------
     let (work, outcomes) = Worker::spawn();
@@ -157,7 +157,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
         match msg.message {
             WM_HOTKEY => {
-                if !enabled {
+                if state == State::Disabled {
                     return Flow::Continue;
                 }
                 if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
@@ -172,21 +172,31 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             }
             WM_TRAY if msg.lParam.0 as u32 == WM_RBUTTONUP => {
-                if let Some(command) = tray.show_menu(enabled) {
+                if let Some(command) = tray.show_menu(state) {
                     match command {
                         MenuCommand::EnableDisable => {
-                            enabled = !enabled;
-                            tray.set_enabled(enabled);
-                            log.note(if enabled { "enabled" } else { "disabled" });
-                            tray.notify(
-                                if enabled { "Enabled" } else { "Disabled" },
-                                if enabled {
-                                    "The hotkey converts the selection again."
-                                } else {
-                                    "The hotkey no longer converts. Nothing is being recorded \
-                                     either way."
-                                },
-                            );
+                            state = match state {
+                                State::Enabled => State::Disabled,
+                                State::Disabled => State::Enabled,
+                            };
+                            tray.set_state(state);
+                            match state {
+                                State::Enabled => {
+                                    log.note("enabled");
+                                    tray.notify(
+                                        "Enabled",
+                                        "The hotkey converts the selection again.",
+                                    );
+                                }
+                                State::Disabled => {
+                                    log.note("disabled");
+                                    tray.notify(
+                                        "Disabled",
+                                        "The hotkey no longer converts. Nothing is being \
+                                         recorded either way.",
+                                    );
+                                }
+                            }
                         }
                         MenuCommand::ReloadConfig => match config_path.as_deref() {
                             Some(path) => match configwatch::load(path) {

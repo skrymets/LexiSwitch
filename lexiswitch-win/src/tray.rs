@@ -21,9 +21,24 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::WinError;
 
-/// The enabled or disabled icon.
-fn load_icon(enabled: bool) -> Result<HICON, WinError> {
-    let which = if enabled { IDI_APPLICATION } else { IDI_HAND };
+/// Whether the hotkey will convert.
+///
+/// Named rather than a bare `bool` because this type's boolean used to mean the opposite —
+/// *paused* rather than *enabled* — and when it was renamed, one call site kept passing the
+/// old value. It still compiled, and the tray came up wearing the disabled icon. A bool has
+/// no polarity the compiler can check; this does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    Enabled,
+    Disabled,
+}
+
+/// The icon for a state.
+fn load_icon(state: State) -> Result<HICON, WinError> {
+    let which = match state {
+        State::Enabled => IDI_APPLICATION,
+        State::Disabled => IDI_HAND,
+    };
     // SAFETY: both are built-in resource identifiers, so no module handle is needed.
     unsafe { LoadIconW(None, which) }.map_err(|e| WinError::new("LoadIconW", e))
 }
@@ -64,7 +79,8 @@ impl Tray {
         let mut data = Self::base(hwnd);
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         data.uCallbackMessage = WM_TRAY;
-        data.hIcon = load_icon(false)?;
+        // The tray starts enabled; nothing has had a chance to disable it yet.
+        data.hIcon = load_icon(State::Enabled)?;
         write_wide(&mut data.szTip, tooltip);
 
         // SAFETY: `data` is fully initialised and its cbSize field matches the struct.
@@ -86,17 +102,16 @@ impl Tray {
     /// the hotkey does not convert — a distinction the tooltip has to make, because a user
     /// who remembers the old behaviour will otherwise read "disabled" as "no longer
     /// watching", which was never something they had to turn off.
-    pub fn set_enabled(&self, enabled: bool) {
-        let Ok(icon) = load_icon(enabled) else { return };
+    pub fn set_state(&self, state: State) {
+        let Ok(icon) = load_icon(state) else { return };
         let mut data = Self::base(self.hwnd);
         data.uFlags = NIF_ICON | NIF_TIP;
         data.hIcon = icon;
         write_wide(
             &mut data.szTip,
-            if enabled {
-                "LexiSwitch"
-            } else {
-                "LexiSwitch — disabled, the hotkey does not convert"
+            match state {
+                State::Enabled => "LexiSwitch",
+                State::Disabled => "LexiSwitch — disabled, the hotkey does not convert",
             },
         );
         // SAFETY: modifies the icon this type added.
@@ -110,15 +125,14 @@ impl Tray {
     /// `SetForegroundWindow` before `TrackPopupMenu` is not optional: without it the menu
     /// does not dismiss when the user clicks elsewhere, and stays on screen forever. This is
     /// a documented quirk of tray menus.
-    pub fn show_menu(&self, enabled: bool) -> Option<MenuCommand> {
+    pub fn show_menu(&self, state: State) -> Option<MenuCommand> {
         // SAFETY: the menu is created, used and destroyed within this call. Every pointer
         // passed is to a local that outlives the call.
         unsafe {
             let menu = CreatePopupMenu().ok()?;
-            let toggle = if enabled {
-                w!("Disable LexiSwitch")
-            } else {
-                w!("Enable LexiSwitch")
+            let toggle = match state {
+                State::Enabled => w!("Disable LexiSwitch"),
+                State::Disabled => w!("Enable LexiSwitch"),
             };
             let _ = AppendMenuW(menu, MF_STRING, MenuCommand::EnableDisable as usize, toggle);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -175,6 +189,11 @@ impl Tray {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: ICON_ID,
+            // Version 4 semantics are *not* in effect: that needs a NIM_SETVERSION call
+            // after NIM_ADD, which is deliberately not made. The tray message handler reads
+            // the notification from `lParam`, which is the legacy packing; under version 4
+            // the message moves into the low word of `lParam` and `wParam` carries
+            // coordinates, so enabling it without changing the handler would break the menu.
             Anonymous: NOTIFYICONDATAW_0 { uVersion: 4 },
             ..Default::default()
         }

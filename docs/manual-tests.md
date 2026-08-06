@@ -24,15 +24,21 @@ removed.
 
 ```powershell
 cargo build --release
-.	arget
-elease\lexiswitch.exe
+.\target\release\lexiswitch.exe
 ```
 
 ### Setup
 
 - [ ] Two or more keyboard layouts installed.
 - [ ] Tray icon appears, and its tooltip reads `LexiSwitch`.
-- [ ] Startup balloon names the selection hotkey.
+- [ ] **The icon is the ordinary application icon, not the red "no entry" one.** The program
+      starts enabled, so the disabled icon at startup means the state and the icon disagree —
+      which is exactly what happened on 2026-08-07 when the tray's boolean was renamed and a
+      call site kept passing the old polarity. Checking only the tooltip did not catch it.
+- [ ] Startup balloon names the selection hotkey. **If it does not appear, do not stop here:**
+      right-click the tray and choose Disable, which fires a balloon on demand. If that one
+      appears, only the startup balloon was missed; if it does not, the notification channel
+      itself is not working and every failure the program reports is invisible.
 - [ ] No console window appears (release build only).
 - [ ] **Check for a stale instance first.** A hotkey held by an earlier copy of the program
       makes registration fail, which ends startup — see the 2026-08-07 note below. Confirm no

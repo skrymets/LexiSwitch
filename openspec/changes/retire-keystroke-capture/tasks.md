@@ -24,13 +24,13 @@ fallout from an earlier one.
 
 Test-first: `lexiswitch-core` config work is logic and must be covered without Windows.
 
-- [ ] 3.1 Write a failing test: a config file containing removed keys loads, applies the keys that remain, and reports the ignored ones by name
-- [ ] 3.2 Relax `deny_unknown_fields` on the top-level config and collect unrecognised keys
-- [ ] 3.3 Remove `convert_last_word`, `convert_clipboard`, `pause_toggle` and `multi_tap_window_ms` from the hotkey settings
-- [ ] 3.4 Remove `BufferConfig` and `Exclusions` entirely, and `behavior.switch_layout_after_correction`
-- [ ] 3.5 Report ignored keys at startup through the tray, distinguishing them from a parse error
-- [ ] 3.6 Update `config.example.toml` to the reduced surface
-- [ ] 3.7 Write a test proving a current-version config file still loads after the change
+- [x] 3.1 Write a failing test: a config file containing removed keys loads, applies the keys that remain, and reports the ignored ones by name
+- [x] 3.2 Relax `deny_unknown_fields` on the top-level config and collect unrecognised keys
+- [x] 3.3 Remove `convert_last_word`, `convert_clipboard`, `pause_toggle` and `multi_tap_window_ms` from the hotkey settings
+- [x] 3.4 Remove `BufferConfig` and `Exclusions` entirely, and `behavior.switch_layout_after_correction`
+- [x] 3.5 Report ignored keys at startup through the tray, distinguishing them from a parse error
+- [x] 3.6 Update `config.example.toml` to the reduced surface
+- [x] 3.7 Write a test proving a current-version config file still loads after the change
 
 ## 4. Tray
 
@@ -47,7 +47,7 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 ## 6. Verification
 
 - [x] 6.1 `cargo test --workspace` green, with only the deleted suites missing
-- [ ] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
+- [x] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
 - [ ] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
 - [ ] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)
 - [ ] 6.5 Rewrite the manual checklist for the reduced product and execute it (migrated from 10.7)

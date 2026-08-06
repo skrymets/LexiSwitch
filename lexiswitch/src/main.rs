@@ -57,6 +57,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut log = EventLog::new(config.logging.enabled);
 
+    // Reported, not silently dropped. A removed setting and a misspelled one both land here,
+    // and naming them is the only way the user can tell which they are looking at. Held until
+    // the tray exists, since that is where the user will see it.
+    let ignored_at_startup = config.ignored_keys();
+
     // --- layouts, window, hotkeys ---------------------------------------------------
     let layouts = layouts::build_all()?;
     log.note(&format!("layouts_built count={}", layouts.len()));
@@ -72,6 +77,15 @@ fn run() -> Result<(), Box<dyn Error>> {
             config.hotkeys.convert_selection
         ),
     );
+    if !ignored_at_startup.is_empty() {
+        tray.notify(
+            "Some settings were ignored",
+            &format!(
+                "{} is not a setting this version has. It was ignored and everything else                  was applied. Check the spelling if you did not expect this.",
+                ignored_at_startup.join(", ")
+            ),
+        );
+    }
 
     // Whether the hotkey converts. Replaces the old paused state, which referred to keystroke
     // recording that no longer happens.
@@ -110,7 +124,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                                 Err(e) => tray.notify("Hotkeys not registered", &e.to_string()),
                             }
                         }
-                        tray.notify("Configuration reloaded", "The new settings are in effect.");
+                        let ignored = config.ignored_keys();
+                        if ignored.is_empty() {
+                            tray.notify(
+                                "Configuration reloaded",
+                                "The new settings are in effect.",
+                            );
+                        } else {
+                            tray.notify(
+                                "Configuration reloaded, some settings ignored",
+                                &format!("Applied, except: {}.", ignored.join(", ")),
+                            );
+                        }
                         log.note("config_reloaded");
                     }
                     Loaded::Missing => {

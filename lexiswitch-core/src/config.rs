@@ -5,101 +5,78 @@
 //! and a file that fails validation simply does not get swapped in, which is how
 //! last-known-good works without a rollback path.
 //!
-//! Unknown keys are rejected rather than ignored. A typo that is silently dropped looks
-//! exactly like a setting that does not work, and the user has no way to tell the
-//! difference.
+//! Unknown keys are **collected and reported**, not rejected and not silently dropped.
+//! Rejecting turns an upgrade into a failure to start, because a file written by an earlier
+//! version fails validation and validation failure means "keep the last known good" — which,
+//! on the first run after an upgrade, does not exist. Dropping silently is friendlier but
+//! destroys the distinction between a setting that was removed and one that was misspelled,
+//! which is exactly what a user needs when a setting appears to do nothing.
+//!
+//! So every struct keeps what it did not recognise, and [`Config::ignored_keys`] names them.
+
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+/// Keys present in the file that no field claimed.
+///
+/// `toml::Value` carries floats, so these types cannot derive `Eq`; `PartialEq` is all the
+/// program compares with.
+type Unknown = BTreeMap<String, toml::Value>;
+
 /// The whole configurable surface, in one readable place.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub hotkeys: Hotkeys,
     pub layouts: Layouts,
-    pub buffer: BufferConfig,
     pub selection: Selection,
-    pub exclusions: Exclusions,
-    pub behavior: Behavior,
     pub logging: Logging,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Hotkeys {
-    pub convert_last_word: String,
     pub convert_selection: String,
-    pub convert_clipboard: String,
-    pub pause_toggle: String,
-    pub multi_tap_window_ms: u32,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Layouts {
     /// Cycle order by language tag. Empty means installed order, layout active at typing
     /// time first.
     pub candidates: Vec<String>,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct BufferConfig {
-    pub idle_timeout_secs: u32,
-    /// Refusing to record in password fields. Validation rejects `false` — see
-    /// [`Config::validate`].
-    pub respect_password_fields: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Selection {
     pub allow_clipboard_fallback: bool,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct Exclusions {
-    pub processes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct Behavior {
-    /// Activate the layout the text was converted into, after a correction.
-    ///
-    /// Off unless enabled, which is also the derived default — the two must not drift
-    /// apart, so this relies on the derive rather than restating it. It makes the *next*
-    /// word land in a different layout from the one just corrected, which is disorienting
-    /// when fixing several words in a row.
-    pub switch_layout_after_correction: bool,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct Logging {
     /// Off unless explicitly enabled, which is also the derived default — the two must not
     /// drift apart, so this relies on the derive rather than restating it.
     pub enabled: bool,
+    #[serde(flatten)]
+    unknown: Unknown,
 }
 
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            convert_last_word: "Pause".into(),
             convert_selection: "Shift+Pause".into(),
-            convert_clipboard: "Ctrl+Pause".into(),
-            pause_toggle: "Ctrl+Shift+Pause".into(),
-            multi_tap_window_ms: 500,
-        }
-    }
-}
-
-impl Default for BufferConfig {
-    fn default() -> Self {
-        Self {
-            idle_timeout_secs: 30,
-            respect_password_fields: true,
+            unknown: Unknown::new(),
         }
     }
 }
@@ -108,32 +85,10 @@ impl Default for Selection {
     fn default() -> Self {
         Self {
             allow_clipboard_fallback: true,
+            unknown: Unknown::new(),
         }
     }
 }
-
-impl Default for Exclusions {
-    fn default() -> Self {
-        Self {
-            processes: vec![
-                // Password managers: a detection failure matters most here.
-                "KeePassXC.exe".into(),
-                "1Password.exe".into(),
-                "Bitwarden.exe".into(),
-                // Terminals: a password prompt there is undetectable in principle — there
-                // is no control with an IsPassword property, only a shell that stopped
-                // echoing. Measured; see docs/manual-tests.md.
-                "WindowsTerminal.exe".into(),
-            ],
-        }
-    }
-}
-
-/// The multi-tap window cannot usefully go below the message-timestamp granularity, which
-/// the Phase 0 spike measured at 15.625 ms.
-const MIN_MULTI_TAP_MS: u32 = 50;
-const MAX_MULTI_TAP_MS: u32 = 5_000;
-const MAX_IDLE_SECS: u32 = 3_600;
 
 impl Config {
     /// Parse and validate. Either the whole configuration is good, or nothing is returned.
@@ -146,82 +101,41 @@ impl Config {
         Ok(config)
     }
 
+    /// Keys the file carried that nothing claimed, as dotted paths, sorted.
+    ///
+    /// Both a removed setting and a misspelled one land here, which is the point: the caller
+    /// names them so the user can tell which they are looking at. Reporting is all that
+    /// happens — an unrecognised key never stops the program starting.
+    pub fn ignored_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.unknown.keys().cloned().collect();
+        let sections: [(&str, &Unknown); 4] = [
+            ("hotkeys", &self.hotkeys.unknown),
+            ("layouts", &self.layouts.unknown),
+            ("selection", &self.selection.unknown),
+            ("logging", &self.logging.unknown),
+        ];
+        for (section, unknown) in sections {
+            keys.extend(unknown.keys().map(|k| format!("{section}.{k}")));
+        }
+        keys.sort();
+        keys
+    }
+
     /// Rules that TOML itself cannot express.
     ///
     /// Each failure carries the line the offending setting sits on, because "your config is
     /// wrong" without a location is a worse experience than no message at all.
     fn validate(&self, text: &str) -> Result<(), ConfigError> {
-        // The one setting that exists in the schema so its absence cannot be mistaken for
-        // an oversight, and is refused rather than honoured (ADR-0005).
-        if !self.buffer.respect_password_fields {
-            return Err(ConfigError::at(
-                text,
-                "buffer",
-                "respect_password_fields",
-                "respect_password_fields cannot be disabled: LexiSwitch will not record \
-                 keystrokes in password fields. Use [exclusions] to exempt an application \
-                 entirely.",
-            ));
-        }
-
-        if !(MIN_MULTI_TAP_MS..=MAX_MULTI_TAP_MS).contains(&self.hotkeys.multi_tap_window_ms) {
+        if self.hotkeys.convert_selection.trim().is_empty() {
             return Err(ConfigError::at(
                 text,
                 "hotkeys",
-                "multi_tap_window_ms",
-                &format!(
-                    "multi_tap_window_ms must be between {MIN_MULTI_TAP_MS} and \
-                     {MAX_MULTI_TAP_MS}; message timestamps resolve to about 16 ms, so \
-                     smaller values cannot be told apart"
-                ),
+                "convert_selection",
+                "convert_selection cannot be empty; give a binding such as \"Shift+Pause\"",
             ));
-        }
-
-        if self.buffer.idle_timeout_secs == 0 || self.buffer.idle_timeout_secs > MAX_IDLE_SECS {
-            return Err(ConfigError::at(
-                text,
-                "buffer",
-                "idle_timeout_secs",
-                &format!("idle_timeout_secs must be between 1 and {MAX_IDLE_SECS}"),
-            ));
-        }
-
-        for (key, value) in [
-            ("convert_last_word", &self.hotkeys.convert_last_word),
-            ("convert_selection", &self.hotkeys.convert_selection),
-            ("convert_clipboard", &self.hotkeys.convert_clipboard),
-            ("pause_toggle", &self.hotkeys.pause_toggle),
-        ] {
-            if value.trim().is_empty() {
-                return Err(ConfigError::at(
-                    text,
-                    "hotkeys",
-                    key,
-                    &format!("{key} cannot be empty; give a binding such as \"Ctrl+Pause\""),
-                ));
-            }
         }
 
         Ok(())
-    }
-}
-
-impl Exclusions {
-    /// Whether keystrokes should never be recorded for this process.
-    ///
-    /// Accepts a bare executable name or a full path, and compares case-insensitively —
-    /// Windows filenames are case-insensitive, and matching them exactly would silently fail
-    /// to protect the applications this list exists for. Matching is whole-name, so a rule
-    /// for `KeePassXC.exe` does not catch `KeePassXC.exe.bak`.
-    pub fn is_excluded(&self, process: &str) -> bool {
-        let name = process
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(process)
-            .trim();
-        self.processes
-            .iter()
-            .any(|listed| listed.trim().eq_ignore_ascii_case(name))
     }
 }
 

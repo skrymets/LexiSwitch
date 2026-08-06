@@ -1,4 +1,4 @@
-//! Tasks 4.1 / 4.3 / 4.5 — configuration parsing, defaults, validation, exclusions.
+//! Configuration parsing, defaults, validation, and migration from an earlier version.
 
 use lexiswitch_core::config::Config;
 
@@ -12,7 +12,7 @@ fn example() -> String {
 #[test]
 fn the_shipped_example_parses() {
     let config = Config::parse(&example()).expect("example config must be valid");
-    assert_eq!(config.hotkeys.convert_last_word, "Pause");
+    assert_eq!(config.hotkeys.convert_selection, "Shift+Pause");
 }
 
 #[test]
@@ -22,152 +22,128 @@ fn the_shipped_example_is_exactly_the_defaults() {
     let from_file = Config::parse(&example()).unwrap();
     let defaults = Config::default();
     assert_eq!(from_file.hotkeys, defaults.hotkeys);
-    assert_eq!(from_file.buffer, defaults.buffer);
     assert_eq!(from_file.selection, defaults.selection);
-    assert_eq!(from_file.behavior, defaults.behavior);
     assert_eq!(from_file.logging, defaults.logging);
     assert_eq!(from_file.layouts, defaults.layouts);
-    assert_eq!(from_file.exclusions, defaults.exclusions);
 }
 
 #[test]
 fn an_empty_file_yields_the_defaults() {
-    // A missing or empty config must behave exactly like the shipped example.
     assert_eq!(Config::parse("").unwrap(), Config::default());
 }
 
 #[test]
 fn every_default_value_is_what_the_design_specifies() {
     let c = Config::default();
-    assert_eq!(c.hotkeys.convert_last_word, "Pause");
     assert_eq!(c.hotkeys.convert_selection, "Shift+Pause");
-    assert_eq!(c.hotkeys.convert_clipboard, "Ctrl+Pause");
-    assert_eq!(c.hotkeys.pause_toggle, "Ctrl+Shift+Pause");
-    assert_eq!(c.hotkeys.multi_tap_window_ms, 500);
-    assert!(c.layouts.candidates.is_empty());
-    assert_eq!(c.buffer.idle_timeout_secs, 30);
-    assert!(c.buffer.respect_password_fields);
     assert!(c.selection.allow_clipboard_fallback);
-    // Off by default: switching after a correction changes what the *next* word will
-    // produce, which surprises more often than it helps.
-    assert!(!c.behavior.switch_layout_after_correction);
-    assert!(!c.logging.enabled);
+    assert!(!c.logging.enabled, "logging is off unless asked for");
+    assert!(c.layouts.candidates.is_empty());
 }
 
 #[test]
 fn a_partial_file_fills_the_rest_from_defaults() {
-    let config = Config::parse("[buffer]\nidle_timeout_secs = 5\n").unwrap();
-    assert_eq!(config.buffer.idle_timeout_secs, 5);
-    // Untouched sections are still the defaults.
-    assert_eq!(config.hotkeys.convert_last_word, "Pause");
-    assert!(config.buffer.respect_password_fields);
-}
-
-// --- 4.3: validation refuses to disable the password-field protection -------------------
-
-#[test]
-fn disabling_password_field_protection_is_rejected() {
-    let err = Config::parse("[buffer]\nrespect_password_fields = false\n")
-        .expect_err("must be refused, not honoured");
-    assert!(
-        err.to_string().contains("respect_password_fields"),
-        "the error must name the setting: {err}"
-    );
-}
-
-#[test]
-fn the_rejection_names_the_line_it_is_on() {
-    let text = "\
-# a comment
-[buffer]
-idle_timeout_secs = 30
-respect_password_fields = false
-";
-    let err = Config::parse(text).expect_err("must be refused");
-    assert_eq!(err.line(), Some(4), "wrong line in: {err}");
-}
-
-#[test]
-fn setting_password_field_protection_to_true_is_fine() {
-    let config = Config::parse("[buffer]\nrespect_password_fields = true\n").unwrap();
-    assert!(config.buffer.respect_password_fields);
+    let config = Config::parse("[logging]
+enabled = true
+").unwrap();
+    assert!(config.logging.enabled);
+    // Untouched sections still carry their defaults.
+    assert_eq!(config.hotkeys.convert_selection, "Shift+Pause");
+    assert!(config.selection.allow_clipboard_fallback);
 }
 
 #[test]
 fn malformed_toml_is_reported_with_a_line() {
-    let err = Config::parse("[buffer\nidle_timeout_secs = 30\n").expect_err("malformed");
-    assert!(err.line().is_some(), "syntax errors must carry a line: {err}");
-}
-
-#[test]
-fn out_of_range_values_are_rejected_with_their_line() {
-    // A multi-tap window below the 15.625 ms timestamp granularity cannot be honoured.
-    let err = Config::parse("[hotkeys]\nmulti_tap_window_ms = 3\n").expect_err("too small");
-    assert_eq!(err.line(), Some(2));
-
-    let err = Config::parse("[buffer]\nidle_timeout_secs = 0\n").expect_err("zero timeout");
-    assert_eq!(err.line(), Some(2));
+    let err = Config::parse("[logging
+enabled = true
+").expect_err("malformed");
+    assert!(err.to_string().contains("line"), "got {err}");
 }
 
 #[test]
 fn an_empty_hotkey_binding_is_rejected() {
-    let err = Config::parse("[hotkeys]\nconvert_last_word = \"\"\n").expect_err("empty binding");
-    assert!(err.to_string().contains("convert_last_word"), "{err}");
+    // Structurally valid TOML, semantically useless: a binding that cannot be registered.
+    let err = Config::parse("[hotkeys]
+convert_selection = \"\"
+").expect_err("empty binding");
+    assert!(err.to_string().contains("convert_selection"), "got {err}");
+}
+
+// --- migration from an earlier version -------------------------------------------------
+//
+// The settings below were removed when keystroke capture was retired. A file still carrying
+// them must not stop the program from starting: validation failure means "keep last known
+// good", and on the first run after an upgrade there is no last known good to keep.
+
+/// Exactly what the previous version shipped, so this is the real upgrade path rather than a
+/// synthetic one.
+const PREVIOUS_VERSION_CONFIG: &str = r#"
+[hotkeys]
+convert_last_word = "Pause"
+convert_selection = "Shift+Pause"
+convert_clipboard = "Ctrl+Pause"
+pause_toggle = "Ctrl+Shift+Pause"
+multi_tap_window_ms = 500
+
+[buffer]
+idle_timeout_secs = 30
+respect_password_fields = true
+
+[selection]
+allow_clipboard_fallback = true
+
+[exclusions]
+processes = ["KeePassXC.exe"]
+
+[behavior]
+switch_layout_after_correction = false
+
+[logging]
+enabled = false
+"#;
+
+#[test]
+fn a_config_from_the_previous_version_still_loads() {
+    let config = Config::parse(PREVIOUS_VERSION_CONFIG)
+        .expect("a config file from the previous version must not stop the program starting");
+    assert_eq!(config.hotkeys.convert_selection, "Shift+Pause");
+    assert!(config.selection.allow_clipboard_fallback);
 }
 
 #[test]
-fn an_unknown_key_is_rejected_rather_than_ignored() {
-    // A typo that is silently ignored looks exactly like a setting that does not work.
-    let err = Config::parse("[buffer]\nidle_timeout_seconds = 30\n").expect_err("typo");
-    assert!(err.to_string().contains("idle_timeout_seconds"), "{err}");
-}
+fn removed_settings_are_reported_by_name() {
+    let config = Config::parse(PREVIOUS_VERSION_CONFIG).unwrap();
+    let ignored = config.ignored_keys();
 
-// --- 4.5: exclusion matching by process name -------------------------------------------
-
-#[test]
-fn a_listed_process_is_excluded() {
-    let c = Config::default();
-    assert!(c.exclusions.is_excluded("KeePassXC.exe"));
-    assert!(!c.exclusions.is_excluded("notepad.exe"));
-}
-
-#[test]
-fn windows_terminal_is_excluded_by_default() {
-    // Not a preference. A terminal password prompt has no IsPassword property to detect —
-    // it is a shell that stopped echoing — so exclusion is the only containment available.
-    // Measured in docs/manual-tests.md; removing this re-opens a gap that detection cannot
-    // close.
-    let c = Config::default();
-    assert!(c.exclusions.is_excluded("WindowsTerminal.exe"));
+    // Whole sections that no longer exist, and keys inside sections that still do.
+    for expected in [
+        "buffer",
+        "exclusions",
+        "behavior",
+        "hotkeys.convert_last_word",
+        "hotkeys.convert_clipboard",
+        "hotkeys.pause_toggle",
+        "hotkeys.multi_tap_window_ms",
+    ] {
+        assert!(
+            ignored.iter().any(|k| k == expected),
+            "expected {expected:?} to be reported as ignored, got {ignored:?}"
+        );
+    }
 }
 
 #[test]
-fn exclusion_matching_ignores_case() {
-    // Windows executable names are case-insensitive; matching them case-sensitively would
-    // silently fail to protect the very applications the list exists for.
-    let c = Config::default();
-    assert!(c.exclusions.is_excluded("keepassxc.exe"));
-    assert!(c.exclusions.is_excluded("KEEPASSXC.EXE"));
+fn a_misspelled_key_is_reported_rather_than_silently_dropped() {
+    // The reason ignoring unknown keys is not enough on its own: a typo and a removed
+    // setting look identical from the outside unless the program says which it saw.
+    let config = Config::parse("[hotkeys]\nconvert_selektion = \"Shift+Pause\"\n").unwrap();
+    assert_eq!(config.ignored_keys(), vec!["hotkeys.convert_selektion"]);
 }
 
 #[test]
-fn exclusion_matching_accepts_a_full_path() {
-    let c = Config::default();
-    assert!(c.exclusions.is_excluded(r"C:\Program Files\KeePassXC\KeePassXC.exe"));
-    assert!(!c.exclusions.is_excluded(r"C:\Windows\System32\notepad.exe"));
-}
-
-#[test]
-fn a_partial_name_does_not_match() {
-    // "Pass.exe" must not be caught by a rule for "KeePassXC.exe", and vice versa.
-    let c = Config::parse("[exclusions]\nprocesses = [\"KeePassXC.exe\"]\n").unwrap();
-    assert!(!c.exclusions.is_excluded("Pass.exe"));
-    assert!(!c.exclusions.is_excluded("KeePassXC.exe.bak"));
-    assert!(!c.exclusions.is_excluded("XKeePassXC.exe"));
-}
-
-#[test]
-fn an_empty_exclusion_list_excludes_nothing() {
-    let c = Config::parse("[exclusions]\nprocesses = []\n").unwrap();
-    assert!(!c.exclusions.is_excluded("KeePassXC.exe"));
+fn the_shipped_example_has_nothing_to_ignore() {
+    // Catches drift the other way: the example file documenting a setting the program no
+    // longer has.
+    let config = Config::parse(&example()).unwrap();
+    assert_eq!(config.ignored_keys(), Vec::<String>::new());
 }

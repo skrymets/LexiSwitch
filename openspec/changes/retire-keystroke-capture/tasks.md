@@ -3,10 +3,10 @@
 Leaf-first, so the tree stays green and every deletion is obviously intended rather than
 fallout from an earlier one.
 
-- [ ] 1.1 Remove the `ConvertLastWord`, `ConvertClipboard` and `PauseToggle` hotkey arms and the `convert_last_word` helper from `lexiswitch/src/main.rs`
-- [ ] 1.2 Remove `Job::Replace` and `Job::ClipboardOnly` and the `convert_clipboard` function from `lexiswitch/src/worker.rs`
-- [ ] 1.3 Remove the `WM_INPUT` arm and the buffer, gate, tap and correction state from the message loop
-- [ ] 1.4 Build and run the workspace; selection conversion still works end to end
+- [x] 1.1 Remove the `ConvertLastWord`, `ConvertClipboard` and `PauseToggle` hotkey arms and the `convert_last_word` helper from `lexiswitch/src/main.rs`
+- [x] 1.2 Remove `Job::Replace` and `Job::ClipboardOnly` and the `convert_clipboard` function from `lexiswitch/src/worker.rs`
+- [x] 1.3 Remove the `WM_INPUT` arm and the buffer, gate, tap and correction state from the message loop
+- [x] 1.4 Build and run the workspace; selection conversion still works end to end
 
 ## 2. Retire capture and cycling
 

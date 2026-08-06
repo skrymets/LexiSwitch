@@ -97,10 +97,10 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 
 /// Opt-in logging of event kinds and sizes. Never content.
 ///
-/// The rule this enforces is absolute: nothing derived from keystrokes reaches disk, and
-/// that includes logs ([ADR-0005](../../docs/adr/0005-bounded-in-memory-keystroke-buffer.md)).
-/// The API therefore takes a length, not a string — a caller cannot log the text even by
-/// mistake, because there is no parameter to pass it in.
+/// The rule this enforces is absolute: nothing the user typed or selected reaches disk, and
+/// that includes logs ([ADR-0011](../../docs/adr/0011-no-keyboard-observation.md)). The API
+/// therefore accepts a kind and, where there is one, a size — never a string. A caller cannot
+/// log the text even by mistake, because there is no parameter to pass it in.
 pub struct EventLog {
     enabled: bool,
 }
@@ -112,13 +112,6 @@ impl EventLog {
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
-    }
-
-    /// Record that something happened, and how big it was.
-    pub fn event(&self, kind: &str, len: usize) {
-        if self.enabled {
-            eprintln!("{kind} len={len}");
-        }
     }
 
     /// Record something with no size to report.

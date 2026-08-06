@@ -1,47 +1,31 @@
 //! The worker thread: everything that is allowed to be slow.
 //!
-//! The message-loop thread runs the window, Raw Input, hotkeys and the tray, and must never
-//! block — a stalled loop means a dead tray icon and, worse, a program that appears to have
-//! frozen the keyboard. UI Automation and clipboard calls can take seconds, so they live
-//! here instead, reached over a channel.
+//! The message-loop thread runs the window, hotkeys and the tray, and must never block — a
+//! stalled loop means a dead tray icon. UI Automation and clipboard calls can take seconds,
+//! so they live here instead, reached over a channel.
 //!
-//! The keystroke buffer never crosses this boundary. The message-loop thread owns it
-//! outright and sends a *snapshot* of the extracted text, which is why the buffer needs no
-//! lock and the most sensitive data in the program is never concurrent
-//! ([ADR-0005](../../docs/adr/0005-bounded-in-memory-keystroke-buffer.md)).
-//!
-//! Neither does any COM interface. UI Automation is apartment-bound, so this thread
+//! No COM interface crosses the boundary. UI Automation is apartment-bound, so this thread
 //! initializes its own rather than accepting one built elsewhere.
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
 use lexiswitch_core::layout::LayoutTable;
-use lexiswitch_win::clipboard::Clipboard;
 use lexiswitch_win::focus::Uia;
-use lexiswitch_win::inject::{self, FocusGuard};
-use lexiswitch_win::langswitch;
 use lexiswitch_win::selection;
 
 /// Work handed to the worker. Everything here is owned data — nothing borrows from the
 /// message-loop thread, and no handle that is thread-affine crosses.
+// One job is sent per hotkey press, so the variants' size disparity costs a few hundred bytes
+// at human speed. Boxing the tables would add indirection to buy nothing measurable.
+#[allow(clippy::large_enum_variant)]
 pub enum Job {
-    /// Replace text already on screen: delete `backspaces` characters, type `text`.
-    Replace {
-        guard: FocusGuard,
-        backspaces: usize,
-        text: String,
-        /// Layout to activate afterward, when configured.
-        activate: Option<u32>,
-    },
     /// Convert whatever is selected, automation first.
     Selection {
         from: LayoutTable,
         to: LayoutTable,
         allow_clipboard: bool,
     },
-    /// Convert the clipboard in place, pasting nothing.
-    ClipboardOnly { from: LayoutTable, to: LayoutTable },
     /// Finish and let the thread exit.
     Stop,
 }
@@ -108,25 +92,6 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>) {
     while let Ok(job) = rx.recv() {
         let outcome = match job {
             Job::Stop => break,
-            Job::Replace {
-                guard,
-                backspaces,
-                text,
-                activate,
-            } => match inject::replace(&guard, backspaces, &text) {
-                Ok(()) => {
-                    if let Some(hkl) = activate {
-                        // Advisory: an application may decline, and there is no reliable way
-                        // to learn that it did.
-                        let _ = langswitch::activate_for_foreground(hkl);
-                    }
-                    Outcome::Quiet
-                }
-                Err(e) => Outcome::Failed {
-                    title: "Correction not applied".into(),
-                    body: e.to_string(),
-                },
-            },
             Job::Selection {
                 from,
                 to,
@@ -156,50 +121,11 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>) {
                     body: e.to_string(),
                 },
             },
-            Job::ClipboardOnly { from, to } => convert_clipboard(&from, &to),
         };
 
         if out.send(outcome).is_err() {
             // The message loop has gone; nothing left to report to.
             break;
         }
-    }
-}
-
-fn convert_clipboard(from: &LayoutTable, to: &LayoutTable) -> Outcome {
-    let owner = windows::Win32::Foundation::HWND(std::ptr::null_mut());
-    let clip = match Clipboard::open(owner, 5) {
-        Ok(c) => c,
-        Err(e) => {
-            return Outcome::Failed {
-                title: "Clipboard not converted".into(),
-                body: e.to_string(),
-            }
-        }
-    };
-    let Some(text) = clip.text() else {
-        return Outcome::Failed {
-            title: "Clipboard not converted".into(),
-            body: "The clipboard holds no text.".into(),
-        };
-    };
-    match lexiswitch_core::convert::convert(&text, from, to) {
-        // Excluded: this is text the program derived, and Clipboard History persists what it
-        // is shown. The restore path in `selection` deliberately does not exclude, because
-        // what it puts back is the user's own.
-        Some(converted) => match clip.set_text_excluded(&converted) {
-            Ok(()) => Outcome::Note {
-                title: "Clipboard converted".into(),
-                body: format!("Converted to {} in place. Nothing was pasted.", to.name()),
-            },
-            Err(e) => Outcome::Failed {
-                title: "Clipboard not converted".into(),
-                body: e.to_string(),
-            },
-        },
-        None => Outcome::Failed {
-            title: "Clipboard not converted".into(),
-            body: "Converting would not change the text.".into(),
-        },
     }
 }

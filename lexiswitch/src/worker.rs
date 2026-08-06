@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use lexiswitch_core::layout::LayoutTable;
 use lexiswitch_win::focus::Uia;
 use lexiswitch_win::selection;
+use lexiswitch_win::window::Waker;
 
 /// Work handed to the worker. Everything here is owned data — nothing borrows from the
 /// message-loop thread, and no handle that is thread-affine crosses.
@@ -48,13 +49,17 @@ pub struct Worker {
 
 impl Worker {
     /// Spawn the worker and return a handle plus the channel its outcomes arrive on.
-    pub fn spawn() -> (Self, Receiver<Outcome>) {
+    ///
+    /// `waker` wakes the message loop when an outcome is ready. Without it nothing is ever
+    /// reported: the loop blocks in `GetMessageW`, so a result produced while it is idle sits
+    /// unread until something unrelated happens to wake it.
+    pub fn spawn(waker: Waker) -> (Self, Receiver<Outcome>) {
         let (tx, rx) = std::sync::mpsc::channel::<Job>();
         let (out_tx, out_rx) = std::sync::mpsc::channel::<Outcome>();
 
         let handle = std::thread::Builder::new()
             .name("lexiswitch-worker".into())
-            .spawn(move || run(rx, out_tx))
+            .spawn(move || run(rx, out_tx, waker))
             .expect("spawning the worker thread");
 
         (
@@ -84,7 +89,7 @@ impl Drop for Worker {
     }
 }
 
-fn run(rx: Receiver<Job>, out: Sender<Outcome>) {
+fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
     // This thread's own automation object. COM apartments are per-thread and an interface
     // created elsewhere must not be used here, so it is built rather than borrowed.
     let uia = Uia::new();
@@ -123,7 +128,10 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>) {
             },
         };
 
-        if out.send(outcome).is_err() {
+        if out.send(outcome).is_ok() {
+            // Drop the result into the channel, then wake the loop so it actually looks.
+            waker.wake();
+        } else {
             // The message loop has gone; nothing left to report to.
             break;
         }

@@ -92,16 +92,26 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut state = State::Enabled;
 
     // --- the worker ----------------------------------------------------------------
-    let (work, outcomes) = Worker::spawn();
+    let (work, outcomes) = Worker::spawn(window.waker());
     let mut watcher = config_path.clone().map(ConfigWatcher::new);
 
     window.run(|msg| {
         // Anything the worker finished gets reported here, on the thread that owns the tray.
         while let Ok(outcome) = outcomes.try_recv() {
             match outcome {
-                Outcome::Quiet => {}
-                Outcome::Note { title, body } | Outcome::Failed { title, body } => {
-                    tray.notify(&title, &body)
+                Outcome::Quiet => log.note("outcome_quiet"),
+                Outcome::Note { title, body } => {
+                    log.note("outcome_note");
+                    tray.notify(&title, &body);
+                }
+                Outcome::Failed { title, body } => {
+                    // Also to the log, because the tray is not a reliable channel. Balloons
+                    // were observed not displaying at all on this machine, and a failure the
+                    // user cannot see is the silent failure the spec forbids. Titles and
+                    // bodies here are this program's own strings — no selected text reaches
+                    // them, so logging them does not weaken the no-content rule.
+                    log.note(&format!("outcome_failed: {title}: {body}"));
+                    tray.notify(&title, &body);
                 }
             }
         }
@@ -162,7 +172,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
                     if let Some((from, to)) = pick_pair(&layouts) {
-                        log.note("selection_requested");
+                        log.note(&format!(
+                            "selection_requested from={} to={}",
+                            from.name(),
+                            to.name()
+                        ));
                         work.send(Job::Selection {
                             from,
                             to,

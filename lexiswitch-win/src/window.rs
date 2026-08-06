@@ -12,13 +12,53 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostQuitMessage,
-    RegisterClassW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_DESTROY, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
+    PostQuitMessage, RegisterClassW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_DESTROY, WNDCLASSW,
 };
 
 use crate::WinError;
 
 const CLASS_NAME: PCWSTR = w!("LexiSwitchMessageWindow");
+
+/// Posted by [`Waker::wake`] to break the loop out of `GetMessageW`.
+///
+/// The loop blocks until a message arrives, so work finished on another thread is not noticed
+/// until something happens to wake it. While Raw Input was registered every keystroke anywhere
+/// delivered `WM_INPUT` and pumped the loop continuously, which hid the need for this; with
+/// observation removed, an idle loop stays idle and a result produced meanwhile is never read.
+pub const WM_WAKE: u32 = WM_APP + 2;
+
+/// Permission to wake a [`MessageWindow`] from another thread.
+///
+/// Holds the window as an integer because a raw `HWND` is not `Send`. It is only ever posted
+/// to, never dereferenced, which is what makes moving it between threads sound.
+#[derive(Debug, Clone, Copy)]
+pub struct Waker {
+    hwnd: isize,
+}
+
+// SAFETY: the value is an opaque window identifier this type never dereferences — it posts to
+// it and nothing else. Moving that between threads cannot create a data race, and posting to a
+// window that has since been destroyed fails harmlessly.
+unsafe impl Send for Waker {}
+
+impl Waker {
+    /// Wake the loop so it looks at whatever the caller has just made ready.
+    pub fn wake(&self) {
+        // SAFETY: posting an application-defined message to an opaque window identifier. A
+        // stale handle makes PostMessageW return false, which is the whole error handling
+        // this needs — there is nothing to clean up either way.
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(self.hwnd as *mut std::ffi::c_void)),
+                WM_WAKE,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+}
 
 /// A message-only window, destroyed when dropped.
 pub struct MessageWindow {
@@ -71,6 +111,13 @@ impl MessageWindow {
 
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// A handle another thread can use to wake this loop.
+    pub fn waker(&self) -> Waker {
+        Waker {
+            hwnd: self.hwnd.0 as isize,
+        }
     }
 
     /// Pump messages until `WM_QUIT`, handing each one to `handler` before dispatching.

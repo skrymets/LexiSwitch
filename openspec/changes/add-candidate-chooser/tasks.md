@@ -3,17 +3,17 @@
 Pure logic over layout tables. Every test here must pass without Windows, against the frozen
 fixtures.
 
-- [ ] 1.1 Failing test: every ordered pair of distinct installed layouts is considered, and no self-pair is
-- [ ] 1.2 Implement pair enumeration over the layout table set
-- [ ] 1.3 Failing test: a candidate whose result equals the original is discarded, including the case where the source layout produces none of the selected characters
-- [ ] 1.4 Implement filtering on top of the existing converter, which already reports "no change"
-- [ ] 1.5 Failing test: two candidates with identical text but different targets are both retained; two with identical text and the same target collapse to one
-- [ ] 1.6 Implement deduplication keyed on result and target together
-- [ ] 1.7 Failing test: a Cyrillic selection ranks Ukrainian-sourced candidates above candidates whose source cannot produce those characters
-- [ ] 1.8 Failing test: a Latin selection with en-US and de-DE installed produces a stable, deterministic order without claiming a source
-- [ ] 1.9 Implement ranking from the deterministic signals only
-- [ ] 1.10 Failing test: unchanged-character counts are reported per candidate
-- [ ] 1.11 **Milestone:** generating candidates for the fixture selections produces exactly the expected set, ordering included, with no Windows involved
+- [x] 1.1 Failing test: every ordered pair of distinct installed layouts is considered, and no self-pair is
+- [x] 1.2 Implement pair enumeration over the layout table set
+- [x] 1.3 Failing test: a candidate whose result equals the original is discarded, including the case where the source layout produces none of the selected characters
+- [x] 1.4 Implement filtering on top of the existing converter, which already reports "no change"
+- [x] 1.5 Failing test: two candidates with identical text but different targets are both retained; two with identical text and the same target collapse to one
+- [x] 1.6 Implement deduplication keyed on result and target together
+- [x] 1.7 Failing test: a Cyrillic selection ranks Ukrainian-sourced candidates above candidates whose source cannot produce those characters
+- [x] 1.8 Failing test: a Latin selection with en-US and de-DE installed produces a stable, deterministic order without claiming a source
+- [x] 1.9 Implement ranking from the deterministic signals only
+- [x] 1.10 Failing test: unchanged-character counts are reported per candidate
+- [x] 1.11 **Milestone:** generating candidates for the fixture selections produces exactly the expected set, ordering included, with no Windows involved
 
 ## 2. Transaction plumbing — `lexiswitch-win`
 

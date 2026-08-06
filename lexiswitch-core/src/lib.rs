@@ -17,6 +17,7 @@
 // The boundary ADR-0001 draws, stated to the compiler rather than to the reader.
 #![forbid(unsafe_code)]
 
+pub mod candidates;
 pub mod config;
 pub mod convert;
 pub mod layout;

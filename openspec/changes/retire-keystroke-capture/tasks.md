@@ -34,8 +34,8 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 
 ## 4. Tray
 
-- [ ] 4.1 Rename `MenuCommand::PauseResume` to enable/disable and update its labels
-- [ ] 4.2 Make the disabled state stop the hotkey converting, without reference to capture
+- [x] 4.1 Rename `MenuCommand::PauseResume` to enable/disable and update its labels
+- [x] 4.2 Make the disabled state stop the hotkey converting, without reference to capture
 - [ ] 4.3 Confirm by hand: disable, press the hotkey, nothing converts; enable, it converts again
 
 ## 5. Prove the absence

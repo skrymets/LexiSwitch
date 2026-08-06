@@ -172,11 +172,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             }
             WM_TRAY if msg.lParam.0 as u32 == WM_RBUTTONUP => {
-                if let Some(command) = tray.show_menu(!enabled) {
+                if let Some(command) = tray.show_menu(enabled) {
                     match command {
-                        MenuCommand::PauseResume => {
+                        MenuCommand::EnableDisable => {
                             enabled = !enabled;
-                            tray.set_paused(!enabled);
+                            tray.set_enabled(enabled);
                             log.note(if enabled { "enabled" } else { "disabled" });
                             tray.notify(
                                 if enabled { "Enabled" } else { "Disabled" },

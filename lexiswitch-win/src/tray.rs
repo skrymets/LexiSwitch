@@ -4,7 +4,7 @@
 //! invisible. The `agent-control` spec requires notifications to state what did *not*
 //! happen — "clipboard busy, selection not converted", never "error 5".
 //!
-//! Menu and paused/active appearances arrive with tasks 9.3 and 9.4; this is the icon and
+//! Menu and enabled/disabled appearances arrive with tasks 9.3 and 9.4; this is the icon and
 //! the balloon.
 
 use windows::core::{w, PCWSTR};
@@ -21,9 +21,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::WinError;
 
-/// The active or paused icon.
-fn load_icon(paused: bool) -> Result<HICON, WinError> {
-    let which = if paused { IDI_HAND } else { IDI_APPLICATION };
+/// The enabled or disabled icon.
+fn load_icon(enabled: bool) -> Result<HICON, WinError> {
+    let which = if enabled { IDI_APPLICATION } else { IDI_HAND };
     // SAFETY: both are built-in resource identifiers, so no module handle is needed.
     unsafe { LoadIconW(None, which) }.map_err(|e| WinError::new("LoadIconW", e))
 }
@@ -41,7 +41,7 @@ pub struct Tray {
 /// Menu command identifiers, posted back as `WM_COMMAND`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
-    PauseResume = 100,
+    EnableDisable = 100,
     ReloadConfig = 101,
     OpenConfig = 102,
     Quit = 103,
@@ -50,7 +50,7 @@ pub enum MenuCommand {
 impl MenuCommand {
     pub fn from_raw(raw: u32) -> Option<Self> {
         match raw {
-            100 => Some(Self::PauseResume),
+            100 => Some(Self::EnableDisable),
             101 => Some(Self::ReloadConfig),
             102 => Some(Self::OpenConfig),
             103 => Some(Self::Quit),
@@ -76,22 +76,27 @@ impl Tray {
         Ok(Self { hwnd })
     }
 
-    /// Switch between the active and paused appearances.
+    /// Switch between the enabled and disabled appearances.
     ///
-    /// Paused uses the system's "no entry" icon rather than a dimmed variant of the active
-    /// one: a tray icon is 16 pixels, and a state that matters this much — keystrokes are or
-    /// are not being recorded — should be distinguishable at a glance, not by comparison.
-    pub fn set_paused(&self, paused: bool) {
-        let Ok(icon) = load_icon(paused) else { return };
+    /// Disabled uses the system's "no entry" icon rather than a dimmed variant of the enabled
+    /// one: a tray icon is 16 pixels, and whether the hotkey will do anything should be
+    /// readable at a glance rather than by comparison.
+    ///
+    /// This used to mean paused *recording*. Nothing is recorded now, so it means only that
+    /// the hotkey does not convert — a distinction the tooltip has to make, because a user
+    /// who remembers the old behaviour will otherwise read "disabled" as "no longer
+    /// watching", which was never something they had to turn off.
+    pub fn set_enabled(&self, enabled: bool) {
+        let Ok(icon) = load_icon(enabled) else { return };
         let mut data = Self::base(self.hwnd);
         data.uFlags = NIF_ICON | NIF_TIP;
         data.hIcon = icon;
         write_wide(
             &mut data.szTip,
-            if paused {
-                "LexiSwitch — paused, not recording"
-            } else {
+            if enabled {
                 "LexiSwitch"
+            } else {
+                "LexiSwitch — disabled, the hotkey does not convert"
             },
         );
         // SAFETY: modifies the icon this type added.
@@ -105,13 +110,17 @@ impl Tray {
     /// `SetForegroundWindow` before `TrackPopupMenu` is not optional: without it the menu
     /// does not dismiss when the user clicks elsewhere, and stays on screen forever. This is
     /// a documented quirk of tray menus.
-    pub fn show_menu(&self, paused: bool) -> Option<MenuCommand> {
+    pub fn show_menu(&self, enabled: bool) -> Option<MenuCommand> {
         // SAFETY: the menu is created, used and destroyed within this call. Every pointer
         // passed is to a local that outlives the call.
         unsafe {
             let menu = CreatePopupMenu().ok()?;
-            let pause_label = if paused { w!("Resume") } else { w!("Pause") };
-            let _ = AppendMenuW(menu, MF_STRING, MenuCommand::PauseResume as usize, pause_label);
+            let toggle = if enabled {
+                w!("Disable LexiSwitch")
+            } else {
+                w!("Enable LexiSwitch")
+            };
+            let _ = AppendMenuW(menu, MF_STRING, MenuCommand::EnableDisable as usize, toggle);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(
                 menu,

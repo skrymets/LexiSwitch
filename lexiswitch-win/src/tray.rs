@@ -4,19 +4,20 @@
 //! invisible. The `agent-control` spec requires notifications to state what did *not*
 //! happen — "clipboard busy, selection not converted", never "error 5".
 //!
-//! Menu and enabled/disabled appearances arrive with tasks 9.3 and 9.4; this is the icon and
-//! the balloon.
+//! The menu needs the window that owns the icon to be the foreground window, which is why
+//! that window is an ordinary hidden top-level one rather than message-only — see
+//! [`crate::window`].
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, POINT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
     NOTIFYICONDATAW, NOTIFYICONDATAW_0, NOTIFY_ICON_INFOTIP_FLAGS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, SetForegroundWindow,
-    TrackPopupMenu, HICON, IDI_APPLICATION, IDI_HAND, MF_SEPARATOR, MF_STRING, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, PostMessageW,
+    SetForegroundWindow, TrackPopupMenu, HICON, IDI_APPLICATION, IDI_HAND, MF_SEPARATOR,
+    MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
 };
 
 use crate::WinError;
@@ -164,6 +165,10 @@ impl Tray {
                 self.hwnd,
                 None,
             );
+            // The other half of the foreground dance, and as load-bearing as the first: without
+            // a message posted to the owner afterwards, the *next* menu fails to dismiss when
+            // the user clicks elsewhere and stays on screen.
+            let _ = PostMessageW(Some(self.hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             let _ = DestroyMenu(menu);
             MenuCommand::from_raw(chosen.0 as u32)
         }

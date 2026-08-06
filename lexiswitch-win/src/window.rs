@@ -1,8 +1,15 @@
 //! The hidden message-only window and its message loop.
 //!
-//! Everything Windows delivers asynchronously — raw input, hotkeys, tray clicks — arrives
-//! as a message to this window. It is message-only (`HWND_MESSAGE`), so it never appears on
-//! screen, in the taskbar, or in Alt-Tab, and it paints nothing.
+//! Everything Windows delivers asynchronously — hotkeys, tray clicks, worker wake-ups —
+//! arrives as a message to this window. It paints nothing and is never shown.
+//!
+//! **It is deliberately not message-only.** `HWND_MESSAGE` would be the natural choice for a
+//! window that only receives messages, and it was the original one, but a message-only window
+//! can never become the foreground window. The tray menu needs exactly that: `TrackPopupMenu`
+//! must be anchored to a foreground window or it has no owner to dismiss against, so the menu
+//! either never appeared or vanished immediately. It is instead an ordinary top-level window
+//! that is never given `WS_VISIBLE`, with `WS_EX_TOOLWINDOW` to keep it out of the taskbar and
+//! Alt-Tab in case it ever is shown.
 //!
 //! The loop must never block. UI Automation and clipboard calls can stall for seconds, and
 //! this same loop is what keeps the tray responsive, so slow work belongs on the worker
@@ -13,8 +20,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_DESTROY, WNDCLASSW,
+    PostQuitMessage, RegisterClassW, MSG, WM_APP, WM_DESTROY, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 
 use crate::WinError;
@@ -71,6 +78,9 @@ impl MessageWindow {
     /// Registering the same class twice fails with `ERROR_CLASS_ALREADY_EXISTS`, which is
     /// harmless — the class from the first call is still usable — so it is not treated as an
     /// error here.
+    ///
+    /// The window is created but never shown, so it has no visible presence despite being a
+    /// top-level window. See the module note for why it is not message-only.
     pub fn new() -> Result<Self, WinError> {
         // SAFETY: the class name is a static wide string with a NUL, and the WNDCLASSW is
         // fully initialised before registration. GetModuleHandleW(None) returns this
@@ -90,15 +100,19 @@ impl MessageWindow {
             let _ = RegisterClassW(&class);
 
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                // Out of the taskbar and Alt-Tab. Belt and braces: without WS_VISIBLE the
+                // window is never shown at all.
+                WS_EX_TOOLWINDOW,
                 CLASS_NAME,
                 w!("LexiSwitch"),
-                WINDOW_STYLE(0),
+                // Top level, and no WS_VISIBLE. A parent of HWND_MESSAGE here would make the
+                // window unable to take the foreground, which the tray menu requires.
+                WS_POPUP,
                 0,
                 0,
                 0,
                 0,
-                Some(HWND_MESSAGE),
+                None,
                 None,
                 Some(hinstance.into()),
                 None,

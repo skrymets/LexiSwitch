@@ -55,7 +55,7 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 
 ## 7. Close out the superseded change
 
-- [ ] 7.1 Populate `openspec/specs/` from `add-manual-layout-conversion` so these deltas have a base to apply against — the previous change was never synced, so main specs are empty
-- [ ] 7.2 Drop task 7.8 of that change, which asks for a capture exclusion list that no longer exists
-- [ ] 7.3 Note that its task 8.6 moves to the chooser change rather than being archived as unfinished
-- [ ] 7.4 Archive `add-manual-layout-conversion`
+- [x] 7.1 Populate `openspec/specs/` from `add-manual-layout-conversion` so these deltas have a base to apply against — the previous change was never synced, so main specs are empty
+- [x] 7.2 Drop task 7.8 of that change, which asks for a capture exclusion list that no longer exists
+- [x] 7.3 Note that its task 8.6 moves to the chooser change rather than being archived as unfinished
+- [x] 7.4 Archive `add-manual-layout-conversion`

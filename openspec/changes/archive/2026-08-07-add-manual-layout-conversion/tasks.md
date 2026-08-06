@@ -1,3 +1,7 @@
+> **Archived superseded, 2026-08-07.** This change is closed at 71/76 rather than completed.
+> The product pivot retired several of the features it built; the five open tasks below are
+> annotated with where each one went. None of them is ticked, because none of them was done.
+
 ## 1. Workspace and gates
 
 - [x] 1.1 Create the workspace `Cargo.toml` with members `lexiswitch-core`, `lexiswitch-win`, `lexiswitch`; set release profile to LTO and `panic = "abort"`
@@ -71,6 +75,8 @@
 - [x] 7.6 Implement `VirtualLock` on the buffer's backing pages
 - [x] 7.7 **Milestone:** focusing a password field, typing, and pressing the hotkey is a no-op, and `probe_focus` confirms the buffer never filled
 - [ ] 7.8 If 7.4 shows gaps in any application, add it to the shipped default exclusion list in `config.example.toml`
+      — **dropped.** The exclusion list existed to keep the keystroke buffer from filling in
+      applications where password detection was unreliable. Both are gone (ADR-0011).
 
 ## 8. Selection and clipboard — `lexiswitch-win`
 
@@ -80,6 +86,9 @@
 - [x] 8.4 Honour the configuration switch disabling the clipboard fallback; report unsupported rather than falling back
 - [x] 8.5 Implement clipboard-only conversion: read, convert, write back, paste nothing
 - [ ] 8.6 **Milestone:** selection conversion works in VS Code (automation path) and Windows Terminal (fallback path), with the prior clipboard restored in both
+      — **migrated** to `add-candidate-chooser` task 7.8. Still wanted, and still uncovered:
+      VS Code is not installed on this machine and Windows Terminal needs a probe that types
+      at a prompt rather than selecting a document.
 
 ## 9. Agent shell — `lexiswitch`
 
@@ -98,8 +107,13 @@
 - [x] 10.2 `cargo deny check` and `cargo audit` pass
 - [x] 10.3 `cargo build --release`; confirm binary under 5 MB
 - [ ] 10.4 Run for an hour idle; confirm resident memory under 20 MB
+      — **migrated** to `retire-keystroke-capture` task 6.3. Startup working set is now
+      measured at 13.1 MB; the hour-long run is still outstanding.
 - [ ] 10.5 Monitor network activity during an extended session; confirm no outbound connection
+      — **migrated** to `retire-keystroke-capture` task 6.4.
 - [x] 10.6 Write `docs/manual-tests.md` as a runnable checklist covering Notepad, Word, Chrome, Windows Terminal, VS Code, Telegram
 - [ ] 10.7 Execute the manual checklist and record results
+      — **migrated** to `retire-keystroke-capture` task 6.5, which rewrites the checklist
+      first: most of what it covered no longer exists.
 - [x] 10.8 Verify with logging enabled that no log line contains converted text
 - [x] 10.9 Confirm every `unsafe` block in `lexiswitch-win` carries a comment stating its invariant

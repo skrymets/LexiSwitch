@@ -285,22 +285,47 @@ an hour, because it covers every code path rather than the ones that happened to
 though it does not cover a library resolving a networking entry point dynamically, which is
 what the runtime check is still for.
 
-### Avast blocks the release build, but not the debug build
+### The release build is blocked; the debug build is not
 
 **Observed 2026-08-05.** Launching `target\release\lexiswitch.exe` fails with *"Access is
 denied"*, while `target\debug\lexiswitch.exe` from the same directory starts normally. The
 file is intact (readable, valid `MZ` header), the ACLs grant `ReadAndExecute` to `Users`,
-and there is no mark-of-the-web stream — so this is not a permissions or quarantine problem.
+and there is no mark-of-the-web stream — so this is not a permissions problem.
 
-Avast is running (`AvastSvc`, `aswidsagent`, `AvastUI`). The release build presents a more
-suspicious profile than the debug one: optimised, symbols stripped, no console
-(`windows_subsystem = "windows"`), registering global hotkeys and calling `SendInput`.
+The release build presents a more suspicious profile than the debug one: optimised, symbols
+stripped, no console (`windows_subsystem = "windows"`), registering global hotkeys and
+calling `SendInput`.
 
-This is exactly what [`environment.md`](environment.md) §8 anticipated. The remedy there
-stands: add an exclusion for the build output directory in Avast, rather than disabling
-protection. Until that is done, release-build verification cannot be run on this machine —
-which affects 10.4 (an hour resident) and 10.5 (network observation) as well as any
-release-mode manual testing.
+Release-build verification cannot be run on this machine until this is resolved, which
+affects 10.4 (an hour resident) and 10.5 (network observation) as well as any release-mode
+manual testing.
+
+> **Correction, 2026-08-07.** The original entry attributed this to Avast and concluded it
+> was "not a quarantine problem". Both are wrong, and the entry above has been amended to
+> remove the attribution while leaving the observation itself intact.
+>
+> **CrowdStrike Falcon is installed and is what acts**, confirmed from its own event log.
+> Two events are recorded, with no further detail in either:
+>
+> ```
+> A process was blocked because malicious behavior was detected.
+> A file was quarantined because malicious behavior was detected.
+> ```
+>
+> Three things follow. It *is* a quarantine, so the original inference from the intact file
+> was unsound — the file was intact when inspected, not when blocked. The verdict is
+> CrowdStrike's generic behavioural ML result rather than a named rule, so **nothing here
+> attributes the block to any particular thing the program does**. And a *file*-level
+> quarantine of an unsigned, zero-prevalence binary points at reputation as much as at
+> behaviour.
+>
+> That last point matters for the pivot. The brief's §22 treats "release build no longer
+> blocked by endpoint protection" as an outcome of removing keystroke capture, but the
+> evidence does not support attributing the block to capture, and every other suspicious
+> attribute above survives the pivot. Treat it as an experiment to run after capture is
+> removed, not as a benefit to assume — and note that code signing, currently deferred in
+> [`environment.md`](environment.md) §6 on the grounds that the binary is not distributed,
+> is a plausible cause that the pivot does not touch.
 
 ---
 

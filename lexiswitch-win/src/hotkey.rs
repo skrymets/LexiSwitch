@@ -16,21 +16,22 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use crate::WinError;
 
 /// Which action a registered hotkey triggers.
+///
+/// The numbering has gaps. Ids 1, 3 and 4 belonged to the last-word, clipboard and pause
+/// hotkeys, which retired with keyboard observation
+/// ([ADR-0011](../../docs/adr/0011-no-keyboard-observation.md)); the survivor keeps its value
+/// rather than being renumbered, because these are only ever compared against themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HotkeyId {
-    ConvertLastWord = 1,
     ConvertSelection = 2,
-    ConvertClipboard = 3,
-    PauseToggle = 4,
+    ChangeCase = 5,
 }
 
 impl HotkeyId {
     pub fn from_raw(raw: i32) -> Option<Self> {
         match raw {
-            1 => Some(Self::ConvertLastWord),
             2 => Some(Self::ConvertSelection),
-            3 => Some(Self::ConvertClipboard),
-            4 => Some(Self::PauseToggle),
+            5 => Some(Self::ChangeCase),
             _ => None,
         }
     }
@@ -38,10 +39,8 @@ impl HotkeyId {
     /// The configuration key this hotkey comes from, for error messages.
     pub fn config_key(&self) -> &'static str {
         match self {
-            Self::ConvertLastWord => "convert_last_word",
             Self::ConvertSelection => "convert_selection",
-            Self::ConvertClipboard => "convert_clipboard",
-            Self::PauseToggle => "pause_toggle",
+            Self::ChangeCase => "change_case",
         }
     }
 }
@@ -132,38 +131,57 @@ fn virtual_key(name: &str) -> Option<u32> {
 
 /// Registered hotkeys, released when dropped.
 ///
-/// Registration is all-or-nothing: if any binding is unavailable, everything already
-/// registered is released and the error names which one failed. A half-registered set would
-/// leave some actions silently dead.
+/// Registration is **per binding**. It was all-or-nothing while there was only one binding, and
+/// that was the right shape for one: a set where half the actions are silently dead is worse
+/// than none. With two it becomes actively harmful — a combination held by another application
+/// would release the one that registered perfectly well, so a conflict on the secondary
+/// shortcut would disable the primary one. Each binding now succeeds or fails on its own and
+/// the caller is told which did which
+/// ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)).
 pub struct Hotkeys {
     hwnd: HWND,
     registered: Vec<HotkeyId>,
 }
 
+/// What a registration attempt achieved, and what it did not.
+///
+/// Not a `Result`: partial success is the normal outcome now, and expressing it as an error
+/// would push every caller into treating one unavailable combination as a failure of the whole
+/// set — which is the behaviour being removed.
+pub struct Registration {
+    /// The bindings that took. Releases them when dropped.
+    pub hotkeys: Hotkeys,
+    /// The bindings that did not, each naming itself.
+    pub failed: Vec<HotkeyError>,
+}
+
 impl Hotkeys {
-    pub fn register(hwnd: HWND, bindings: &[(HotkeyId, Binding)]) -> Result<Self, HotkeyError> {
-        let mut this = Self {
+    /// Try every binding, keeping whatever works.
+    pub fn register(hwnd: HWND, bindings: &[(HotkeyId, Binding)]) -> Registration {
+        let mut hotkeys = Self {
             hwnd,
             registered: Vec::new(),
         };
+        let mut failed = Vec::new();
         for (id, binding) in bindings {
             // SAFETY: hwnd is a live window owned by this thread, and the id is unique
             // within it. On failure nothing was registered for this id.
-            let result = unsafe {
-                RegisterHotKey(Some(hwnd), *id as i32, binding.modifiers, binding.vkey)
-            };
+            let result =
+                unsafe { RegisterHotKey(Some(hwnd), *id as i32, binding.modifiers, binding.vkey) };
             match result {
-                Ok(()) => this.registered.push(*id),
-                Err(e) => {
-                    // Dropping `this` releases whatever did register.
-                    return Err(HotkeyError {
-                        id: *id,
-                        source: WinError::new("RegisterHotKey", e),
-                    });
-                }
+                Ok(()) => hotkeys.registered.push(*id),
+                Err(e) => failed.push(HotkeyError {
+                    id: *id,
+                    source: WinError::new("RegisterHotKey", e),
+                }),
             }
         }
-        Ok(this)
+        Registration { hotkeys, failed }
+    }
+
+    /// Whether this set holds a live registration for `id`.
+    pub fn holds(&self, id: HotkeyId) -> bool {
+        self.registered.contains(&id)
     }
 }
 
@@ -299,5 +317,52 @@ mod tests {
     #[test]
     fn an_unnameable_key_is_declined() {
         assert_eq!(format_binding(MOD_CONTROL, 0xFF), None);
+    }
+
+    /// One combination another application holds must not take the others down with it.
+    ///
+    /// The failure this guards against is invisible from inside: a conflict on the case
+    /// shortcut would have released the conversion shortcut, so the product's primary function
+    /// would stop working because its secondary one could not be bound.
+    ///
+    /// A null window handle registers against the calling thread, which is what makes this
+    /// testable without creating a window. The combinations are deliberately absurd — every
+    /// modifier plus a key most keyboards do not have — so the test does not depend on what
+    /// else is running, and both registrations are released when the values drop.
+    #[test]
+    fn an_unavailable_binding_does_not_release_the_available_ones() {
+        let hwnd = HWND(std::ptr::null_mut());
+        let all = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN;
+        let contested = Binding {
+            modifiers: all,
+            vkey: 0x87,
+        };
+        let free = Binding {
+            modifiers: all,
+            vkey: 0x86,
+        };
+
+        let holder = Hotkeys::register(hwnd, &[(HotkeyId::ConvertSelection, contested)]);
+        assert!(
+            holder.failed.is_empty(),
+            "this test needs the contested combination to start out free"
+        );
+
+        // The same id against the same window, so the refusal is certain rather than
+        // dependent on what else happens to be running.
+        let second = Hotkeys::register(
+            hwnd,
+            &[
+                (HotkeyId::ChangeCase, free),
+                (HotkeyId::ConvertSelection, contested),
+            ],
+        );
+
+        assert!(
+            second.hotkeys.holds(HotkeyId::ChangeCase),
+            "the available binding was released along with the unavailable one"
+        );
+        assert_eq!(second.failed.len(), 1, "exactly one binding was unavailable");
+        assert_eq!(second.failed[0].id, HotkeyId::ConvertSelection);
     }
 }

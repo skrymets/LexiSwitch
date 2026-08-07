@@ -30,6 +30,18 @@ enabled = true
 # happens until you press it.
 convert_selection = "Shift+Pause"
 
+# Select text, then press this to change its case — UPPERCASE, snake_case, and so on — with
+# optional stripping of punctuation, digits and whitespace.
+#
+# A separate shortcut and a separate window, deliberately. Any text at all can be re-cased,
+# and any text at all can be reinterpreted under another layout, so a single list would be
+# half irrelevant every time with nothing to say which half. See
+# docs/adr/0014-case-conversion-is-a-separate-transaction.md.
+#
+# It cannot be the same combination as convert_selection; that is refused at load rather
+# than left to fail as a registration conflict you would read as another application's fault.
+change_case = "Win+Ctrl+Pause"
+
 [layouts]
 # Preferred order by language tag — for example ["en-US", "de-DE"].
 #

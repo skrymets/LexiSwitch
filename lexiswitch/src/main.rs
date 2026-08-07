@@ -17,10 +17,10 @@
 use std::error::Error;
 
 use lexiswitch_core::config::Config;
-use lexiswitch_core::state::{AgentState, Shortcut};
+use lexiswitch_core::state::{AgentState, Shortcut, Shortcuts};
 
 use lexiswitch_win::focus::process_name;
-use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
+use lexiswitch_win::hotkey::{parse_binding, HotkeyId, Hotkeys};
 use lexiswitch_win::recorder::{self, Recorded};
 use lexiswitch_win::inject::FocusGuard;
 use lexiswitch_win::instance;
@@ -73,6 +73,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // --- configuration -------------------------------------------------------------
     let config_path = configwatch::default_path();
+    // Where the case window's usage counts live. Resolved here and handed to the worker, which
+    // owns the file outright (ADR-0015).
+    let state_file = configwatch::state_path();
     let mut config = match &config_path {
         Some(path) => match configwatch::load(path) {
             Loaded::Ok(config) => *config,
@@ -125,23 +128,15 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let window = MessageWindow::new()?;
 
-    // A shortcut another application holds is a state, not an exit.
-    let mut hotkeys = None;
-    let mut shortcut = match register_hotkeys(&window, &config) {
-        Ok(registered) => {
-            hotkeys = Some(registered);
-            Shortcut::Registered(config.hotkeys.convert_selection.clone())
-        }
-        Err(e) => {
-            log.note(&format!("hotkey_conflict: {e}"));
-            Shortcut::Conflict(config.hotkeys.convert_selection.clone())
-        }
-    };
+    // A shortcut another application holds is a state, not an exit — and now that there are
+    // two, one being held is not a statement about the other. Registration is per binding, so
+    // a conflict on the case shortcut leaves conversion working and vice versa.
+    let (mut hotkeys, mut shortcuts) = register_hotkeys(&window, &config, &mut log);
 
     let mut enabled = config.general.enabled;
     let mut state = AgentState::resolve(
         layout_count,
-        shortcut.clone(),
+        shortcuts.clone(),
         enabled,
         runtime_error.clone(),
     );
@@ -208,9 +203,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                             // Release the old bindings before claiming the new ones, or the
                             // unchanged ones collide with themselves.
                             hotkeys = None;
-                            match register_hotkeys(&window, &config) {
-                                Ok(h) => hotkeys = Some(h),
-                                Err(e) => tray.notify("Hotkeys not registered", &e.to_string()),
+                            let (h, s) = register_hotkeys(&window, &config, &mut log);
+                            hotkeys = h;
+                            shortcuts = s;
+                            // Only what failed, and only when something did. A reload that
+                            // rebinds successfully already reports itself below.
+                            let refused = unavailable(&shortcuts);
+                            if !refused.is_empty() {
+                                tray.notify(
+                                    "Some shortcuts were not registered",
+                                    &format!(
+                                        "{refused} Both commands remain available from this                                          menu."
+                                    ),
+                                );
                             }
                         }
                         let ignored = config.ignored_keys();
@@ -255,6 +260,16 @@ fn run() -> Result<(), Box<dyn Error>> {
 
         match msg.message {
             WM_HOTKEY => {
+                // Both shortcuts are gated on the same enabled state: disabling LexiSwitch
+                // disables LexiSwitch, not one of its two transactions.
+                if state.converts()
+                    && matches!(
+                        HotkeyId::from_raw(msg.wParam.0 as i32),
+                        Some(HotkeyId::ChangeCase)
+                    )
+                {
+                    request_case(&work, &config, &state_file, &mut log);
+                }
                 if state.converts()
                     && matches!(
                         HotkeyId::from_raw(msg.wParam.0 as i32),
@@ -289,16 +304,33 @@ fn run() -> Result<(), Box<dyn Error>> {
                         layouts = built;
                     }
                 }
-                if matches!(shortcut, Shortcut::Conflict(_)) {
-                    if let Ok(registered) = register_hotkeys(&window, &config) {
-                        log.note("hotkey_conflict_cleared");
-                        hotkeys = Some(registered);
-                        shortcut = Shortcut::Registered(config.hotkeys.convert_selection.clone());
+                if matches!(shortcuts.convert, Shortcut::Conflict(_))
+                    || matches!(shortcuts.case, Shortcut::Conflict(_))
+                {
+                    // Release first: re-registering a combination this process already holds
+                    // would be refused, and would look exactly like the conflict it is meant
+                    // to clear.
+                    hotkeys = None;
+                    let (h, s) = register_hotkeys(&window, &config, &mut log);
+                    hotkeys = h;
+                    // Named per shortcut, because with two of them "the conflict cleared" is
+                    // no longer one fact. Identifiers only — the combination itself comes from
+                    // the user's file and does not need to be in a log to make this useful.
+                    for (was, now, which) in [
+                        (&shortcuts.convert, &s.convert, "convert"),
+                        (&shortcuts.case, &s.case, "case"),
+                    ] {
+                        if matches!(was, Shortcut::Conflict(_))
+                            && matches!(now, Shortcut::Registered(_))
+                        {
+                            log.note(&format!("hotkey_conflict_cleared id={which}"));
+                        }
                     }
+                    shortcuts = s;
                 }
                 let refreshed = AgentState::resolve(
                     layout_count,
-                    shortcut.clone(),
+                    shortcuts.clone(),
                     enabled,
                     runtime_error.clone(),
                 );
@@ -341,13 +373,22 @@ fn run() -> Result<(), Box<dyn Error>> {
                     config.general.enabled = enabled;
                     state = AgentState::resolve(
                         layout_count,
-                        shortcut.clone(),
+                        shortcuts.clone(),
                         enabled,
                         runtime_error.clone(),
                     );
                     tray.set_state(&state);
                     log.note(if enabled { "enabled" } else { "disabled" });
                     tray.notify(&state.summary(), &state.explanation());
+                }
+                MenuCommand::ChangeCase => {
+                    // The same job the shortcut sends, and the only way to change case while
+                    // that shortcut is held by another application.
+                    if state.converts() {
+                        request_case(&work, &config, &state_file, &mut log);
+                    } else {
+                        tray.notify(&state.summary(), &state.explanation());
+                    }
                 }
                 MenuCommand::ConvertSelection => {
                     // The same job the hotkey sends, and the only way to convert while the
@@ -377,19 +418,25 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "APPDATA is not set, so there is nowhere to look.",
                     ),
                 },
-                MenuCommand::ChangeShortcut => {
+                MenuCommand::ChangeShortcut | MenuCommand::ChangeCaseShortcut => {
+                    let which = if command == MenuCommand::ChangeShortcut {
+                        Which::Convert
+                    } else {
+                        Which::Case
+                    };
                     change_shortcut(
+                        which,
                         &window,
                         &tray,
                         &mut config,
                         &config_path,
                         &mut hotkeys,
-                        &mut shortcut,
+                        &mut shortcuts,
                         &mut log,
                     );
                     state = AgentState::resolve(
                         layout_count,
-                        shortcut.clone(),
+                        shortcuts.clone(),
                         enabled,
                         runtime_error.clone(),
                     );
@@ -458,6 +505,68 @@ fn request_conversion(
     });
 }
 
+/// The bindings that could not be taken, as a sentence — empty when both registered.
+fn unavailable(shortcuts: &Shortcuts) -> String {
+    let held: Vec<&str> = [&shortcuts.convert, &shortcuts.case]
+        .into_iter()
+        .filter_map(|s| match s {
+            Shortcut::Conflict(binding) => Some(binding.as_str()),
+            Shortcut::Registered(_) => None,
+        })
+        .collect();
+    match held.len() {
+        0 => String::new(),
+        1 => format!("{} is held by another application.", held[0]),
+        _ => format!("{} are held by other applications.", held.join(" and ")),
+    }
+}
+
+/// Which of the two shortcuts a command is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Which {
+    Convert,
+    Case,
+}
+
+impl Which {
+    /// The configuration key this shortcut is stored under.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Convert => "convert_selection",
+            Self::Case => "change_case",
+        }
+    }
+
+    /// What it does, for a message the user reads.
+    fn does(self) -> &'static str {
+        match self {
+            Self::Convert => "converts the selection",
+            Self::Case => "changes case",
+        }
+    }
+}
+
+/// Ask the worker to change the case of whatever is selected.
+///
+/// Reachable from the shortcut and from the tray, for the same reason conversion is: the tray
+/// path is what keeps the transaction usable while another application holds the combination.
+fn request_case(
+    work: &Worker,
+    config: &Config,
+    state_file: &Option<std::path::PathBuf>,
+    log: &mut EventLog,
+) {
+    log.note(&format!(
+        "case_requested app={}",
+        process_name(FocusGuard::capture().window())
+    ));
+    work.send(Job::Case {
+        allow_clipboard: config.selection.allow_clipboard_fallback,
+        expanded_lines: config.chooser.expanded_lines(),
+        state_path: state_file.clone(),
+    });
+}
+
 /// Record a replacement shortcut, try it, and keep it only if it works.
 ///
 /// Loops until something is registered or the user gives up, because a recorder that closes on
@@ -467,19 +576,25 @@ fn request_conversion(
 /// Nothing is written to the configuration file until a combination is actually registered. The
 /// file describes behaviour, so writing a shortcut that does not work would make it a lie —
 /// and on the next start the program would come up in a conflict it had recorded for itself.
+#[allow(clippy::too_many_arguments)]
 fn change_shortcut(
+    which: Which,
     window: &MessageWindow,
     tray: &Tray,
     config: &mut Config,
     config_path: &Option<std::path::PathBuf>,
     hotkeys: &mut Option<Hotkeys>,
-    shortcut: &mut Shortcut,
+    shortcuts: &mut Shortcuts,
     log: &mut EventLog,
 ) {
     let mut rejected: Option<String> = None;
 
     loop {
-        let recorded = match recorder::show(shortcut, rejected.take()) {
+        let current = match which {
+            Which::Convert => shortcuts.convert.clone(),
+            Which::Case => shortcuts.case.clone(),
+        };
+        let recorded = match recorder::show(&current, rejected.take()) {
             Ok(r) => r,
             Err(e) => {
                 tray.notify("Could not open the recorder", &e.to_string());
@@ -493,41 +608,69 @@ fn change_shortcut(
 
         // Release what is held before trying the replacement: a combination cannot be tested
         // while this process is the thing holding it, and re-registering the same one would
-        // otherwise look like a conflict with itself.
+        // otherwise look like a conflict with itself. Both go, because the other one is this
+        // process too and the user may be moving one onto the other.
         *hotkeys = None;
         let mut trial = config.clone();
-        trial.hotkeys.convert_selection = binding.clone();
-
-        match register_hotkeys(window, &trial) {
-            Ok(registered) => {
-                *hotkeys = Some(registered);
-                *config = trial;
-                *shortcut = Shortcut::Registered(binding.clone());
-                log.note("shortcut_changed");
-
-                let written = persist_shortcut(config_path, &binding);
-                tray.notify(
-                    "Shortcut changed",
-                    &match written {
-                        Ok(()) => format!("{binding} now converts the selection."),
-                        Err(e) => format!(
-                            "{binding} now converts the selection, but it could not be saved: \
-                             {e}. It will revert when LexiSwitch restarts."
-                        ),
-                    },
-                );
-                return;
-            }
-            Err(e) => {
-                // Put back whatever worked before. Silence would be the worst outcome of an
-                // attempt to fix silence.
-                if matches!(shortcut, Shortcut::Registered(_)) {
-                    *hotkeys = register_hotkeys(window, config).ok();
-                }
-                log.note("shortcut_rejected");
-                rejected = Some(format!("{binding} is not available: {e}"));
-            }
+        match which {
+            Which::Convert => trial.hotkeys.convert_selection = binding.clone(),
+            Which::Case => trial.hotkeys.change_case = binding.clone(),
         }
+
+        // Refused before it is attempted, because the registration failure would name another
+        // application and there is none — the combination is this program's own other shortcut.
+        let clash = match which {
+            Which::Convert => trial.hotkeys.change_case.clone(),
+            Which::Case => trial.hotkeys.convert_selection.clone(),
+        };
+        if clash.trim().eq_ignore_ascii_case(binding.trim()) {
+            let (h, s) = register_hotkeys(window, config, log);
+            *hotkeys = h;
+            *shortcuts = s;
+            rejected = Some(format!(
+                "{binding} is already the other LexiSwitch shortcut. One combination cannot                  open two windows."
+            ));
+            continue;
+        }
+
+        let (registered, attempted) = register_hotkeys(window, &trial, log);
+        let took = match which {
+            Which::Convert => matches!(attempted.convert, Shortcut::Registered(_)),
+            Which::Case => matches!(attempted.case, Shortcut::Registered(_)),
+        };
+
+        if took {
+            *hotkeys = registered;
+            *config = trial;
+            *shortcuts = attempted;
+            log.note("shortcut_changed");
+
+            let written = persist_setting(
+                config_path,
+                "hotkeys",
+                which.key(),
+                &format!("\"{}\"", binding.replace('"', "\\\"")),
+            );
+            tray.notify(
+                "Shortcut changed",
+                &match written {
+                    Ok(()) => format!("{binding} now {}.", which.does()),
+                    Err(e) => format!(
+                        "{binding} now {}, but it could not be saved: {e}. It will revert                          when LexiSwitch restarts.",
+                        which.does()
+                    ),
+                },
+            );
+            return;
+        }
+
+        // Put back whatever worked before. Silence would be the worst outcome of an attempt
+        // to fix silence.
+        let (h, s) = register_hotkeys(window, config, log);
+        *hotkeys = h;
+        *shortcuts = s;
+        log.note("shortcut_rejected");
+        rejected = Some(format!("{binding} is not available."));
     }
 }
 
@@ -549,33 +692,55 @@ fn persist_setting(
     std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
-/// Write the shortcut into the configuration file, leaving the rest of it alone.
-fn persist_shortcut(
-    config_path: &Option<std::path::PathBuf>,
-    binding: &str,
-) -> Result<(), String> {
-    let Some(path) = config_path else {
-        return Err("APPDATA is not set, so there is nowhere to save it".into());
-    };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+/// Claim both bindings, keeping whatever the system will give.
+///
+/// Returns what registered and the state of each binding. Never an error: one combination held
+/// by another application is a condition to report, not a reason to abandon the other — and a
+/// binding that cannot even be parsed is the same kind of problem from the user's side, so it
+/// lands in the same state rather than in a separate failure path.
+fn register_hotkeys(
+    window: &MessageWindow,
+    config: &Config,
+    log: &mut EventLog,
+) -> (Option<Hotkeys>, Shortcuts) {
+    let wanted = [
+        (HotkeyId::ConvertSelection, &config.hotkeys.convert_selection),
+        (HotkeyId::ChangeCase, &config.hotkeys.change_case),
+    ];
+
+    let mut bindings = Vec::new();
+    let mut unparsed = Vec::new();
+    for (id, text) in wanted {
+        match parse_binding(text) {
+            Ok(b) => bindings.push((id, b)),
+            Err(e) => {
+                log.note(&format!("binding_unparsed id={id:?}"));
+                unparsed.push((id, e));
+            }
+        }
     }
-    // An unreadable file is treated as an absent one rather than as a reason to refuse: the
-    // rewrite creates what it needs, and failing here would leave a working shortcut unsaved
-    // for no benefit.
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let updated = lexiswitch_core::config::rewrite_hotkey(&existing, binding);
-    std::fs::write(path, updated).map_err(|e| e.to_string())
-}
 
-fn register_hotkeys(window: &MessageWindow, config: &Config) -> Result<Hotkeys, Box<dyn Error>> {
-    let bindings: Vec<(HotkeyId, Binding)> =
-        [(HotkeyId::ConvertSelection, &config.hotkeys.convert_selection)]
-            .into_iter()
-            .map(|(id, text)| parse_binding(text).map(|b| (id, b)))
-            .collect::<Result<Vec<_>, _>>()?;
+    let outcome = Hotkeys::register(window.hwnd(), &bindings);
+    for failure in &outcome.failed {
+        log.note(&format!("hotkey_conflict: {failure}"));
+    }
 
-    Ok(Hotkeys::register(window.hwnd(), &bindings)?)
+    let status = |id: HotkeyId, text: &str| {
+        if unparsed.iter().any(|(u, _)| *u == id) || !outcome.hotkeys.holds(id) {
+            Shortcut::Conflict(text.to_string())
+        } else {
+            Shortcut::Registered(text.to_string())
+        }
+    };
+    let shortcuts = Shortcuts {
+        convert: status(
+            HotkeyId::ConvertSelection,
+            &config.hotkeys.convert_selection,
+        ),
+        case: status(HotkeyId::ChangeCase, &config.hotkeys.change_case),
+    };
+
+    (Some(outcome.hotkeys), shortcuts)
 }
 
 fn open_config(path: &Option<std::path::PathBuf>, tray: &Tray) {

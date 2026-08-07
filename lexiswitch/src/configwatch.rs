@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use lexiswitch_core::config::Config;
+use lexiswitch_core::usage::Usage;
 
 /// Where the configuration lives: `%APPDATA%\LexiSwitch\config.toml`.
 pub fn default_path() -> Option<PathBuf> {
@@ -21,6 +22,42 @@ pub fn default_path() -> Option<PathBuf> {
             .join("LexiSwitch")
             .join("config.toml")
     })
+}
+
+/// Where the usage counts live: `%APPDATA%\LexiSwitch\state.toml`.
+///
+/// Beside the configuration file and never inside it
+/// ([ADR-0015](../../docs/adr/0015-usage-memory-outside-configuration.md)). One file the user
+/// writes, one file the program writes.
+pub fn state_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(|appdata| PathBuf::from(appdata).join("LexiSwitch").join("state.toml"))
+}
+
+/// Read the usage counts, treating every failure as "no memory yet".
+///
+/// Missing, unreadable and malformed all mean the same thing, and none of them is worth
+/// reporting: there is nothing in this file the user chose, and nothing in it worth failing to
+/// start over.
+pub fn load_usage(path: Option<&Path>) -> Usage {
+    path.and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|text| Usage::parse(&text))
+        .unwrap_or_default()
+}
+
+/// Write the usage counts back, reporting failure to the caller's log rather than the user.
+///
+/// A count that could not be saved costs the ordering on the next run and nothing else, so it
+/// is not worth a notification — but it is worth a log line, because "the order never sticks"
+/// is otherwise unexplainable.
+pub fn save_usage(path: Option<&Path>, usage: &Usage) -> Result<(), String> {
+    let Some(path) = path else {
+        return Err("APPDATA is not set, so there is nowhere to save it".into());
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(path, usage.render()).map_err(|e| e.to_string())
 }
 
 /// Outcome of an attempt to load configuration.

@@ -48,13 +48,14 @@ fn main() {
         }
     };
 
-    match Hotkeys::register(window.hwnd(), &[(HotkeyId::ConvertSelection, binding)]) {
-        Ok(_held) => {
+    let held = Hotkeys::register(window.hwnd(), &[(HotkeyId::ConvertSelection, binding)]);
+    match held.failed.first() {
+        None => {
             say!("HOLDING {binding_text} for {seconds}s — anything else asking for it will be refused");
-            // The registration lives as long as `_held`, which lives as long as this scope.
+            // The registration lives as long as `held`, which lives as long as this scope.
             thread::sleep(Duration::from_secs(seconds));
             say!("releasing {binding_text}");
         }
-        Err(e) => say!("could not take {binding_text}: {e}"),
+        Some(e) => say!("could not take {binding_text}: {e}"),
     }
 }

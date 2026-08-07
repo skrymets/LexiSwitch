@@ -26,10 +26,9 @@ use lexiswitch_core::state::{suggested_shortcuts, Shortcut};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
-    InvalidateRect, SelectObject, SetBkMode, SetTextColor, COLOR_GRAYTEXT, COLOR_WINDOW,
-    COLOR_WINDOWTEXT, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, HDC, HGDIOBJ, PAINTSTRUCT,
-    TRANSPARENT,
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, GetSysColor, InvalidateRect,
+    SelectObject, SetBkMode, COLOR_GRAYTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, DT_CENTER, DT_LEFT,
+    HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -37,11 +36,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, GetWindowLongPtrW, LoadCursorW, RegisterClassW, SetWindowLongPtrW, ShowWindow,
-    TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WM_ACTIVATE,
-    WM_CLOSE, WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WM_SYSKEYDOWN, WNDCLASSW, WS_BORDER,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+    GetWindowLongPtrW, LoadCursorW, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
+    CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, WM_ACTIVATE, WM_CLOSE, WM_KEYDOWN, WM_NCCREATE,
+    WM_PAINT, WM_SYSKEYDOWN, WNDCLASSW, WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::hotkey::format_binding;
@@ -72,17 +70,12 @@ struct Recorder<'a> {
     done: Option<Recorded>,
     /// Whether losing activation should be treated as the user clicking away.
     ///
-    /// Not armed until the window has settled in front. Taking the foreground from another
-    /// process emits activate, deactivate, activate before the user has done anything, and
-    /// treating that transient as a departure cancels the window before its loop even starts.
-    ///
-    /// This is the chooser's bug, reproduced here in full, because the fix lived in that
-    /// window's state rather than anywhere shared. The recorder cancelled itself instantly and
-    /// logged `shortcut_recording_cancelled` with nothing on screen.
-    armed: bool,
-    line_height: i32,
-    scale: i32,
-    font: windows::Win32::Graphics::Gdi::HFONT,
+    /// This window once reproduced the chooser's activation bug in full — cancelling itself
+    /// instantly and logging `shortcut_recording_cancelled` with nothing on screen — because
+    /// the fix lived in the chooser's own state rather than anywhere shared. It now lives in
+    /// [`winui::Activation`], which is the shared place.
+    activation: winui::Activation,
+    pen: winui::Pen,
 }
 
 /// Open the recorder and block until the user chooses a combination or gives up.
@@ -109,22 +102,18 @@ pub fn show(current: &Shortcut, rejected: Option<String>) -> Result<Recorded, Wi
         let _ = RegisterClassW(&class);
     }
 
-    let scale = winui::dpi_scale();
-    let font = winui::ui_font(scale, false);
-    let (line_height, _, _) = winui::metrics(font, scale);
     let mut state = Recorder {
         current,
         rejected,
         candidate: None,
         done: None,
-        armed: false,
-        line_height,
-        scale,
-        font,
+        activation: winui::Activation::new(),
+        pen: winui::Pen::new(winui::dpi_scale()),
     };
 
+    let scale = state.pen.scale;
     let width = 620 * scale;
-    let height = line_height * 8 + 28 * scale;
+    let height = state.pen.line_height * 8 + 28 * scale;
     let (x, y) = winui::centre_on_active_monitor(width, height);
 
     let param = &mut state as *mut Recorder as *const std::ffi::c_void;
@@ -148,21 +137,14 @@ pub fn show(current: &Shortcut, rejected: Option<String>) -> Result<Recorded, Wi
     }
     .map_err(|e| WinError::new("CreateWindowExW", e))?;
 
-    // SAFETY: `hwnd` was just created here and is still alive.
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-    }
-    if !winui::take_foreground(hwnd) {
-        // SAFETY: as above.
+    if !state.activation.present(hwnd) {
+        // SAFETY: `hwnd` was just created here and is still alive. The font goes with `state`
+        // when this function returns.
         unsafe {
             let _ = DestroyWindow(hwnd);
-            let _ = windows::Win32::Graphics::Gdi::DeleteObject(HGDIOBJ(font.0));
         }
         return Err(WinError::last("SetForegroundWindow"));
     }
-
-    // Only now is losing the foreground meaningful.
-    state.armed = true;
 
     let mut msg = MSG::default();
     loop {
@@ -181,11 +163,10 @@ pub fn show(current: &Shortcut, rejected: Option<String>) -> Result<Recorded, Wi
         }
     }
 
-    // SAFETY: created here, not destroyed elsewhere, and destroyed before `state` is dropped.
-    // The font goes with it, once nothing can still have it selected.
+    // SAFETY: created here, not destroyed elsewhere, and destroyed before `state` is dropped —
+    // which is what stops the font going while a paint could still select it.
     unsafe {
         let _ = DestroyWindow(hwnd);
-        let _ = windows::Win32::Graphics::Gdi::DeleteObject(HGDIOBJ(font.0));
     }
     Ok(state.done.unwrap_or(Recorded::Cancelled))
 }
@@ -259,7 +240,7 @@ impl Recorder<'_> {
     }
 
     fn paint(&self, hdc: HDC, client: RECT) {
-        let scale = self.scale;
+        let scale = self.pen.scale;
         let pad = 18 * scale;
         let inner = client.right - client.left - pad * 2;
 
@@ -276,29 +257,29 @@ impl Recorder<'_> {
         let dim = COLORREF(unsafe { GetSysColor(COLOR_GRAYTEXT) });
 
         let mut y = pad;
-        self.line(hdc, "Choose a shortcut", pad, y, inner, text_colour, DT_LEFT);
-        y += self.line_height;
+        self.pen.draw_aligned(hdc, "Choose a shortcut", pad, y, inner, text_colour, DT_LEFT);
+        y += self.pen.line_height;
 
         let current = match self.current {
             Shortcut::Registered(b) => format!("Currently {b}"),
             Shortcut::Conflict(b) => format!("{b} is held by another application"),
         };
-        self.line(hdc, &current, pad, y, inner, dim, DT_LEFT);
-        y += self.line_height + 8 * scale;
+        self.pen.draw_aligned(hdc, &current, pad, y, inner, dim, DT_LEFT);
+        y += self.pen.line_height + 8 * scale;
 
         let shown = self
             .candidate
             .clone()
             .unwrap_or_else(|| "Press a combination…".to_string());
-        self.line(hdc, &shown, pad, y, inner, text_colour, DT_CENTER);
-        y += self.line_height + 8 * scale;
+        self.pen.draw_aligned(hdc, &shown, pad, y, inner, text_colour, DT_CENTER);
+        y += self.pen.line_height + 8 * scale;
 
         if let Some(why) = &self.rejected {
-            self.line(hdc, why, pad, y, inner, text_colour, DT_LEFT);
+            self.pen.draw_aligned(hdc, why, pad, y, inner, text_colour, DT_LEFT);
         }
-        y += self.line_height;
+        y += self.pen.line_height;
 
-        self.line(
+        self.pen.draw_aligned(
             hdc,
             "Hold modifiers and press a key. Enter accepts, Escape cancels.",
             pad,
@@ -307,8 +288,8 @@ impl Recorder<'_> {
             dim,
             DT_LEFT,
         );
-        y += self.line_height;
-        self.line(
+        y += self.pen.line_height;
+        self.pen.draw_aligned(
             hdc,
             "Enter and Escape can themselves be recorded when held with a modifier.",
             pad,
@@ -317,7 +298,7 @@ impl Recorder<'_> {
             dim,
             DT_LEFT,
         );
-        y += self.line_height;
+        y += self.pen.line_height;
         // Suggestions, never promises: whether any of these is free depends on every other
         // application running, and the only way to find out is to try one.
         let current = match self.current {
@@ -325,7 +306,7 @@ impl Recorder<'_> {
         };
         let ideas = suggested_shortcuts(current);
         if !ideas.is_empty() {
-            self.line(
+            self.pen.draw_aligned(
                 hdc,
                 &format!("Often free, but not guaranteed: {}", ideas.join(", ")),
                 pad,
@@ -337,30 +318,6 @@ impl Recorder<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn line(
-        &self,
-        hdc: HDC,
-        text: &str,
-        x: i32,
-        y: i32,
-        width: i32,
-        colour: COLORREF,
-        align: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
-    ) {
-        let mut rect = RECT {
-            left: x,
-            top: y,
-            right: x + width,
-            bottom: y + self.line_height,
-        };
-        let mut wide: Vec<u16> = text.encode_utf16().collect();
-        // SAFETY: `hdc` is valid for this paint and both buffers live across the call.
-        unsafe {
-            SetTextColor(hdc, colour);
-            DrawTextW(hdc, &mut wide, &mut rect, DT_SINGLELINE | DT_NOPREFIX | align);
-        }
-    }
 }
 
 /// SAFETY (contract on the caller, which is Windows): invoked by the window manager for a
@@ -397,7 +354,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let hdc = BeginPaint(hwnd, &mut ps);
                 let mut client = RECT::default();
                 let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut client);
-                let previous = SelectObject(hdc, HGDIOBJ(state.font.0));
+                let previous = SelectObject(hdc, HGDIOBJ(state.pen.face().0));
                 state.paint(hdc, client);
                 SelectObject(hdc, previous);
                 let _ = EndPaint(hwnd, &ps);
@@ -420,12 +377,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         // keyboard aimed at something else — but only once it is really in front, and only if
         // it has genuinely lost the foreground rather than merely been told so.
         WM_ACTIVATE => {
-            if (wp.0 & 0xFFFF) == 0 && state.armed && state.done.is_none() {
-                // SAFETY: no preconditions.
-                let front = unsafe { GetForegroundWindow() };
-                if front != hwnd {
-                    state.done = Some(Recorded::Cancelled);
-                }
+            if state.done.is_none() && state.activation.is_departure(hwnd, wp.0) {
+                state.done = Some(Recorded::Cancelled);
             }
             LRESULT(0)
         }

@@ -1,23 +1,31 @@
-//! The few window mechanics the chooser and the recorder both need.
+//! The few window mechanics LexiSwitch's small windows all need.
 //!
-//! Two small windows now exist, built the same way for the same reasons: they take focus
-//! because [ADR-0011](../../docs/adr/0011-no-keyboard-observation.md) leaves no other way to
-//! read a keyboard, and they draw with raw GDI because the 5 MB budget rules out a toolkit.
-//! Everything here was written for the chooser and is shared rather than copied — the
-//! foreground handling in particular is subtle enough that two versions would drift.
+//! Three of them now exist, built the same way for the same reasons: they take focus because
+//! [ADR-0011](../../docs/adr/0011-no-keyboard-observation.md) leaves no other way to read a
+//! keyboard, and they draw with raw GDI because the 5 MB budget rules out a toolkit.
+//!
+//! Everything here is shared rather than copied, and one item is here specifically because
+//! copying it failed once. The rule that a window must settle in the foreground before losing
+//! activation counts as the user walking away lived in the chooser's own state; the recorder
+//! reproduced the bug in full when it was written, cancelling itself instantly with nothing on
+//! screen. It is now [`Activation`], which cannot be used without arming it, because arming is
+//! what [`Activation::present`] does.
 
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, GetDC, GetDeviceCaps, GetMonitorInfoW, GetTextMetricsW, MonitorFromWindow,
-    ReleaseDC, SelectObject, CLEARTYPE_QUALITY, DEFAULT_CHARSET, FF_DONTCARE,
-    FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HFONT, HGDIOBJ, LOGPIXELSY, MONITORINFO,
+    CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, FillRect, GetDC, GetDeviceCaps,
+    GetMonitorInfoW, GetSysColor, GetTextMetricsW, MonitorFromWindow, ReleaseDC, SelectObject,
+    SetTextColor, CLEARTYPE_QUALITY, COLOR_BTNFACE, DEFAULT_CHARSET, DRAW_TEXT_FORMAT,
+    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, FF_DONTCARE,
+    FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, LOGPIXELSY, MONITORINFO,
     MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, TEXTMETRICW,
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+    ShowWindow, SW_SHOW, WA_INACTIVE,
 };
 
 /// Pixels per logical unit at the primary display's DPI, as a whole-number scale.
@@ -36,7 +44,7 @@ pub fn dpi_scale() -> i32 {
 }
 
 /// A UI font at the display's scale. The caller owns it and must delete it.
-pub fn ui_font(scale: i32, emphasised: bool) -> HFONT {
+fn ui_font(scale: i32, emphasised: bool) -> HFONT {
     let height = -(11 * 96 * scale / 72);
     // SAFETY: every argument is a plain value and the face name is a static NUL-terminated wide
     // string. A failure returns a null HFONT, which SelectObject tolerates by leaving the DC's
@@ -71,7 +79,7 @@ pub fn ui_font(scale: i32, emphasised: bool) -> HFONT {
 /// Returns `(row height, wrapped-line height, character width)`. The middle value is what
 /// `DrawTextW` uses when it wraps, which is *not* the row height — the row has padding and the
 /// wrapped line does not, and confusing them puts a clip boundary through the middle of a line.
-pub fn metrics(font: HFONT, scale: i32) -> (i32, i32, i32) {
+fn metrics(font: HFONT, scale: i32) -> (i32, i32, i32) {
     // SAFETY: a null window handle asks for a screen DC, which needs no window to exist.
     let hdc = unsafe { GetDC(None) };
     if hdc.is_invalid() {
@@ -192,4 +200,230 @@ pub fn take_foreground(hwnd: HWND) -> bool {
         }
     }
     false
+}
+
+/// Whether a window has settled in the foreground, and what losing it means.
+///
+/// Exists as a type rather than a `bool` field because it was a `bool` field twice and was
+/// wrong the second time. Taking the foreground from another process emits activate,
+/// deactivate, activate before the user has done anything; a window that treats the first
+/// deactivation as a departure cancels itself before its message loop starts, which is what
+/// made the chooser flash and vanish and then made the recorder do the same.
+///
+/// The rule is not stated separately from the act of showing the window: [`present`] is the
+/// only way to get an armed `Activation`, so a window that shows itself correctly cannot fail
+/// to arm, and one that never came to the front can never report a departure.
+///
+/// [`present`]: Activation::present
+#[derive(Debug, Default)]
+pub struct Activation {
+    armed: bool,
+}
+
+impl Activation {
+    /// A window that has not been shown yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Show `hwnd`, bring it to the foreground, and arm the departure rule.
+    ///
+    /// Returns false when the foreground could not be taken, and leaves the rule unarmed. A
+    /// window that is not in front receives no keys and its modal loop has no way out — its own
+    /// Escape would go to whatever kept the foreground — so refusing is the only outcome that is
+    /// not a hang, and the caller is expected to destroy the window and report it.
+    ///
+    /// Retried, because losing a race against another window activating is recoverable.
+    pub fn present(&mut self, hwnd: HWND) -> bool {
+        // SAFETY: `hwnd` is a live window owned by the calling thread.
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+            let took = take_foreground(hwnd);
+            #[cfg(feature = "chooser-diag")]
+            eprintln!("[winui] present attempt {attempt} -> {took}");
+            if took {
+                // Only now is losing the foreground meaningful: everything before this point is
+                // the handoff settling, and reacting to it abandons something the user never did.
+                self.armed = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether this `WM_ACTIVATE` means the user went somewhere else.
+    ///
+    /// `wparam` is the message's raw `WPARAM`. False before the window has settled in front, and
+    /// false for a deactivation that leaves it in front anyway — that is a transient of the
+    /// handoff, not a departure, and it is confirmed against the window manager rather than
+    /// trusted from the message.
+    pub fn is_departure(&self, hwnd: HWND, wparam: usize) -> bool {
+        if !self.armed || (wparam & 0xFFFF) != WA_INACTIVE as usize {
+            return false;
+        }
+        // SAFETY: no preconditions.
+        let front = unsafe { GetForegroundWindow() };
+        front != hwnd
+    }
+}
+
+/// The fonts and measurements a window draws with, and the drawing itself.
+///
+/// Owns both fonts and deletes them when dropped, so the one cleanup step that has no visible
+/// symptom when forgotten is not something a new window has to remember. Every measurement is
+/// taken once here, because a layout that advances by measured metrics must be sized from the
+/// same ones — a guess in one place and a measurement in the other is what clipped the
+/// chooser's footer.
+pub struct Pen {
+    font: HFONT,
+    bold: HFONT,
+    /// Height of one row: the font's height plus breathing room.
+    pub line_height: i32,
+    /// Height of one *wrapped* line as `DrawTextW` lays it out — the font's height plus its
+    /// external leading, with none of the row padding.
+    ///
+    /// Kept apart from `line_height` because scrolling and clipping work against lines GDI
+    /// positions, not rows the caller positions. Using the padded value there steps the scroll
+    /// further than one line and puts the clip boundary through the middle of a line, leaving a
+    /// half-drawn row that reads as corruption.
+    pub text_line: i32,
+    /// Approximate width of one character, for turning a pixel width into a character count.
+    pub char_width: i32,
+    pub scale: i32,
+}
+
+impl Pen {
+    /// Create both fonts and measure them.
+    pub fn new(scale: i32) -> Self {
+        let font = ui_font(scale, false);
+        let bold = ui_font(scale, true);
+        let (line_height, text_line, char_width) = metrics(font, scale);
+        Self {
+            font,
+            bold,
+            line_height,
+            text_line,
+            char_width,
+            scale,
+        }
+    }
+
+    /// The regular face, for selecting into a device context around a block of drawing.
+    pub fn face(&self) -> HFONT {
+        self.font
+    }
+
+    /// One line of text in a fixed box, clipped with an ellipsis if it overflows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw(
+        &self,
+        hdc: HDC,
+        text: &str,
+        x: i32,
+        y: i32,
+        width: i32,
+        colour: COLORREF,
+        emphasised: bool,
+    ) {
+        let face = if emphasised { self.bold } else { self.font };
+        // SAFETY: `hdc` is valid for the paint and the previous font is restored immediately.
+        let previous = unsafe { SelectObject(hdc, HGDIOBJ(face.0)) };
+        self.write(
+            hdc,
+            text,
+            x,
+            y,
+            width,
+            colour,
+            DT_LEFT | DT_END_ELLIPSIS,
+        );
+        // SAFETY: restoring the object selected a moment ago.
+        unsafe {
+            SelectObject(hdc, previous);
+        }
+    }
+
+    /// One line of text against the right edge of the box.
+    pub fn draw_right(&self, hdc: HDC, text: &str, pad: i32, y: i32, inner: i32, colour: COLORREF) {
+        self.write(hdc, text, pad, y, inner, colour, DT_RIGHT | DT_END_ELLIPSIS);
+    }
+
+    /// One line of text with an alignment the caller chooses and no ellipsis.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_aligned(
+        &self,
+        hdc: HDC,
+        text: &str,
+        x: i32,
+        y: i32,
+        width: i32,
+        colour: COLORREF,
+        align: DRAW_TEXT_FORMAT,
+    ) {
+        self.write(hdc, text, x, y, width, colour, align);
+    }
+
+    /// A horizontal separator in the system's control colour.
+    pub fn rule(&self, hdc: HDC, left: i32, y: i32, right: i32) {
+        let rect = RECT {
+            left,
+            top: y,
+            right,
+            bottom: y + 1.max(self.scale),
+        };
+        // SAFETY: `hdc` is valid for the paint and the brush is deleted immediately.
+        unsafe {
+            let brush = CreateSolidBrush(COLORREF(GetSysColor(COLOR_BTNFACE)));
+            FillRect(hdc, &rect, brush);
+            let _ = DeleteObject(HGDIOBJ(brush.0));
+        }
+    }
+
+    /// The one call every helper above funnels into.
+    #[allow(clippy::too_many_arguments)]
+    fn write(
+        &self,
+        hdc: HDC,
+        text: &str,
+        x: i32,
+        y: i32,
+        width: i32,
+        colour: COLORREF,
+        format: DRAW_TEXT_FORMAT,
+    ) {
+        let mut rect = RECT {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + self.line_height,
+        };
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        // SAFETY: `hdc` is valid for the paint, and `wide` and `rect` live for the whole call.
+        unsafe {
+            SetTextColor(hdc, colour);
+            DrawTextW(
+                hdc,
+                &mut wide,
+                &mut rect,
+                DT_SINGLELINE | DT_NOPREFIX | format,
+            );
+        }
+    }
+}
+
+impl Drop for Pen {
+    fn drop(&mut self) {
+        // SAFETY: both fonts were created by `new` and belong to this `Pen`. A `Pen` outlives the
+        // window that draws with it — the window is destroyed before the state holding the `Pen`
+        // is dropped — so neither is still selected into any device context.
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(self.font.0));
+            let _ = DeleteObject(HGDIOBJ(self.bold.0));
+        }
+    }
 }

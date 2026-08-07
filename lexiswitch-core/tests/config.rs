@@ -147,3 +147,82 @@ fn the_shipped_example_has_nothing_to_ignore() {
     let config = Config::parse(&example()).unwrap();
     assert_eq!(config.ignored_keys(), Vec::<String>::new());
 }
+
+// --- the case-conversion shortcut ----------------------------------------------------
+//
+// A second transaction means a second binding (ADR-0014). It defaults like the first, so an
+// existing configuration file written before this version keeps working and simply gains the
+// default — which is what "settings that no longer exist are ignored" has to be mirrored by
+// on the way in.
+
+/// The default is the combination the design settled on, and it is present without being
+/// written down.
+#[test]
+fn the_case_shortcut_has_a_default() {
+    let config = Config::parse("").expect("an empty file is valid");
+    assert_eq!(config.hotkeys.change_case, "Win+Ctrl+Pause");
+}
+
+/// A file from before this version has no `change_case` key. It must still load, and must not
+/// report the missing key as a problem — it was never the user's to write.
+#[test]
+fn a_file_without_the_case_shortcut_still_loads() {
+    let config = Config::parse(
+        r#"
+[hotkeys]
+convert_selection = "Ctrl+Alt+K"
+"#,
+    )
+    .expect("a file predating the case shortcut is valid");
+    assert_eq!(config.hotkeys.convert_selection, "Ctrl+Alt+K");
+    assert_eq!(config.hotkeys.change_case, "Win+Ctrl+Pause");
+    assert!(
+        config.ignored_keys().is_empty(),
+        "{:?}",
+        config.ignored_keys()
+    );
+}
+
+/// Both bindings are read, and neither is confused for the other.
+#[test]
+fn both_shortcuts_are_read() {
+    let config = Config::parse(
+        r#"
+[hotkeys]
+convert_selection = "Ctrl+Alt+K"
+change_case = "Ctrl+Alt+C"
+"#,
+    )
+    .expect("valid");
+    assert_eq!(config.hotkeys.convert_selection, "Ctrl+Alt+K");
+    assert_eq!(config.hotkeys.change_case, "Ctrl+Alt+C");
+}
+
+/// An empty binding is refused for the same reason the first one is: it cannot be registered,
+/// and silently defaulting it would make the file a description of something else.
+#[test]
+fn an_empty_case_shortcut_is_rejected_with_its_line() {
+    let text = "[hotkeys]\nconvert_selection = \"Shift+Pause\"\nchange_case = \"\"\n";
+    let err = Config::parse(text).expect_err("an empty binding is not usable");
+    assert!(err.to_string().contains("change_case"), "got {err}");
+    assert_eq!(err.line(), Some(3), "the offending line is not pointed at");
+}
+
+/// The two must differ. One combination cannot open two windows, and the failure would
+/// otherwise be a registration conflict the user reads as another application's fault.
+#[test]
+fn the_two_shortcuts_may_not_be_the_same() {
+    let text = "[hotkeys]\nconvert_selection = \"Shift+Pause\"\nchange_case = \"Shift+Pause\"\n";
+    let err = Config::parse(text).expect_err("one combination cannot do both");
+    assert!(err.to_string().contains("change_case"), "got {err}");
+}
+
+/// Differing only in spacing or case is still the same combination to Windows.
+#[test]
+fn the_sameness_check_is_not_fooled_by_spelling() {
+    let text = "[hotkeys]\nconvert_selection = \"Shift+Pause\"\nchange_case = \" shift + pause \"\n";
+    assert!(
+        Config::parse(text).is_err(),
+        "the same combination spelled differently was accepted"
+    );
+}

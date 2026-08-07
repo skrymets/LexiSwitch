@@ -11,7 +11,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
 use lexiswitch_core::candidates::{self, Candidate};
+use lexiswitch_core::casing;
 use lexiswitch_core::layout::LayoutTable;
+use lexiswitch_core::usage::Usage;
+use lexiswitch_win::casewindow;
 use lexiswitch_win::chooser::{self, Decision};
 use lexiswitch_win::focus::Uia;
 use lexiswitch_win::transaction::Transaction;
@@ -40,6 +43,17 @@ pub enum Job {
         allow_clipboard: bool,
         /// How many lines the chooser's expanded view shows, from configuration.
         expanded_lines: i32,
+    },
+    /// Change the case of whatever is selected.
+    ///
+    /// Carries no layout tables and no active layout: case is a property of the characters
+    /// themselves, so nothing about the keyboard is relevant to it
+    /// ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)).
+    Case {
+        allow_clipboard: bool,
+        expanded_lines: i32,
+        /// Where the usage counts live. The worker owns that file outright — see `run`.
+        state_path: Option<std::path::PathBuf>,
     },
     /// Finish and let the thread exit.
     Stop,
@@ -109,9 +123,43 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
     // created elsewhere must not be used here, so it is built rather than borrowed.
     let uia = Uia::new();
 
+    // The usage counts belong to this thread and to nothing else: loaded once, mutated in
+    // memory, written after a commit or a reset. One owner means no lock to get wrong and one
+    // writer for the file (ADR-0015). Loaded lazily, so an agent that is never asked to change
+    // case never touches the file at all.
+    let mut usage: Option<Usage> = None;
+
     while let Ok(job) = rx.recv() {
         let outcome = match job {
             Job::Stop => break,
+            Job::Case {
+                allow_clipboard,
+                expanded_lines,
+                state_path,
+            } => {
+                let memory = usage.get_or_insert_with(|| {
+                    crate::configwatch::load_usage(state_path.as_deref())
+                });
+                let before = memory.clone();
+                let outcome = change_case(
+                    uia.as_ref().and_then(|u| u.automation()),
+                    allow_clipboard,
+                    expanded_lines,
+                    memory,
+                );
+                // Written only when it actually changed, so cancelling a window costs no disk
+                // write — and a reset persists even though nothing was applied, because the
+                // user asked for it and would otherwise find it undone on the next start.
+                if *memory != before {
+                    if let Err(e) = crate::configwatch::save_usage(state_path.as_deref(), memory) {
+                        // Not the user's problem: it costs the ordering on the next run and
+                        // nothing else. Worth a record, because "the order never sticks" is
+                        // otherwise unexplainable.
+                        eprintln!("lexiswitch: usage not saved: {e}");
+                    }
+                }
+                outcome
+            }
             Job::Selection {
                 tables,
                 handles,
@@ -198,6 +246,80 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
         } else {
             // The message loop has gone; nothing left to report to.
             break;
+        }
+    }
+}
+
+/// Read the selection, offer the case styles, and apply whichever the user commits.
+///
+/// Structurally the conversion path with the layout parts removed: the same transaction, the
+/// same commit, the same four distinguishable outcomes. What it does not have is any notion of
+/// a target layout, because changing case never changes what the keyboard produces.
+fn change_case(
+    automation: Option<&windows::Win32::UI::Accessibility::IUIAutomation>,
+    allow_clipboard: bool,
+    expanded_lines: i32,
+    usage: &mut Usage,
+) -> Outcome {
+    // No owner window: the worker owns none, and the clipboard does not need one.
+    let owner = windows::Win32::Foundation::HWND(std::ptr::null_mut());
+    let transaction = match Transaction::begin(automation, owner, allow_clipboard, 5) {
+        Ok(t) => t,
+        Err(e) => {
+            return Outcome::Failed {
+                title: "Selection could not be read".into(),
+                body: e.to_string(),
+            }
+        }
+    };
+
+    match casewindow::show(transaction.original(), usage, expanded_lines) {
+        Err(e) => {
+            // The window could not take the foreground, so it could never have been typed
+            // into. Nothing was modified.
+            let _ = transaction.cancel();
+            Outcome::Failed {
+                title: "Case window did not open".into(),
+                body: e.to_string(),
+            }
+        }
+        Ok(casewindow::Decision::Cancel) => match transaction.cancel() {
+            Ok(()) => Outcome::Quiet {
+                note: "case_cancelled",
+            },
+            Err(e) => Outcome::Failed {
+                title: "Cancelled, with a loose end".into(),
+                body: e.to_string(),
+            },
+        },
+        Ok(casewindow::Decision::Apply { style, strips }) => {
+            let replacement = casing::render(transaction.original(), style, &strips);
+            let committed = match transaction.commit(&replacement) {
+                Ok(done) => done,
+                // Never reported as success, and never partially: the transaction restores what
+                // it can before returning the error.
+                Err(e) => {
+                    return Outcome::Failed {
+                        title: "Replacement failed".into(),
+                        body: e.to_string(),
+                    }
+                }
+            };
+
+            // Only after the replacement landed. Counting a style the user never got would
+            // promote it on the strength of a failure.
+            usage.record(style);
+
+            match committed.lost_nontext {
+                false => Outcome::Quiet {
+                    note: "case_applied",
+                },
+                true => Outcome::Note {
+                    title: format!("Changed case, {}", style.label()),
+                    body: "The clipboard held an image or formatted content, which the                            conversion destroyed. Text on it was restored."
+                        .to_string(),
+                },
+            }
         }
     }
 }

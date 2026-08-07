@@ -8,17 +8,30 @@
 //!
 //! Both are now states the program carries while running. This is the logic that decides which
 //! one it is in and what that means; it knows nothing about Windows.
+//!
+//! There are two shortcuts now, one per transaction
+//! ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)), so a
+//! conflict is no longer a single fact — it has to name which combination is unavailable and
+//! say what still works.
 
-use lexiswitch_core::state::{AgentState, Shortcut};
+use lexiswitch_core::state::{AgentState, Shortcut, Shortcuts};
 
-/// The ordinary case: two layouts, a registered shortcut, switched on.
+fn both_registered() -> Shortcuts {
+    Shortcuts {
+        convert: Shortcut::Registered("Shift+Pause".into()),
+        case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+    }
+}
+
+/// The ordinary case: two layouts, both shortcuts registered, switched on.
 #[test]
 fn a_healthy_agent_converts() {
-    let s = AgentState::resolve(3, Shortcut::Registered("Shift+Pause".into()), true, None);
+    let s = AgentState::resolve(3, both_registered(), true, None);
     assert_eq!(
         s,
         AgentState::Enabled {
-            binding: "Shift+Pause".into()
+            convert: "Shift+Pause".into(),
+            case: "Win+Ctrl+Pause".into(),
         }
     );
     assert!(s.converts());
@@ -27,7 +40,7 @@ fn a_healthy_agent_converts() {
 /// Turning it off is the user's choice, and it is not an error.
 #[test]
 fn disabled_does_not_convert_and_is_not_a_problem() {
-    let s = AgentState::resolve(3, Shortcut::Registered("Shift+Pause".into()), false, None);
+    let s = AgentState::resolve(3, both_registered(), false, None);
     assert_eq!(s, AgentState::Disabled);
     assert!(!s.converts());
     assert!(!s.needs_attention());
@@ -37,25 +50,28 @@ fn disabled_does_not_convert_and_is_not_a_problem() {
 /// rather than exiting, which is what the spec requires and what the old `?` did not do.
 #[test]
 fn one_layout_disables_conversion_but_not_the_program() {
-    let s = AgentState::resolve(1, Shortcut::Registered("Shift+Pause".into()), true, None);
+    let s = AgentState::resolve(1, both_registered(), true, None);
     assert_eq!(s, AgentState::TooFewLayouts { installed: 1 });
     assert!(!s.converts());
     assert!(s.needs_attention());
     assert!(s.explanation().contains("two"));
 }
 
-/// A held shortcut stops the *shortcut*, not the program. Conversion is still possible from the
-/// tray, so this state converts — otherwise a conflict would leave a running program that can
-/// do nothing at all.
+/// A held shortcut stops the *shortcut*, not the program. Both transactions are still reachable
+/// from the tray, so this state converts — otherwise a conflict would leave a running program
+/// that can do nothing at all.
 #[test]
 fn a_shortcut_conflict_still_allows_conversion() {
-    let s = AgentState::resolve(3, Shortcut::Conflict("Shift+Pause".into()), true, None);
-    assert_eq!(
-        s,
-        AgentState::ShortcutConflict {
-            binding: "Shift+Pause".into()
-        }
+    let s = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Conflict("Shift+Pause".into()),
+            case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
     );
+    assert!(matches!(s, AgentState::ShortcutConflict { .. }));
     assert!(s.converts());
     assert!(s.needs_attention());
     assert!(!s.shortcut_works());
@@ -65,16 +81,140 @@ fn a_shortcut_conflict_still_allows_conversion() {
 /// which one.
 #[test]
 fn a_conflict_names_the_combination() {
-    let s = AgentState::resolve(3, Shortcut::Conflict("Ctrl+Alt+K".into()), true, None);
+    let s = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Conflict("Ctrl+Alt+K".into()),
+            case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
     assert!(s.explanation().contains("Ctrl+Alt+K"));
 }
+
+// --- two shortcuts -------------------------------------------------------------------
+
+/// One unavailable combination must not be reported as though everything is broken. The other
+/// shortcut is working, and saying so is the difference between a user who knows what to fix
+/// and one who thinks the program is dead.
+#[test]
+fn one_conflict_says_what_still_works() {
+    let s = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Registered("Shift+Pause".into()),
+            case: Shortcut::Conflict("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
+    let explanation = s.explanation();
+    assert!(
+        explanation.contains("Win+Ctrl+Pause"),
+        "the unavailable combination is not named: {explanation}"
+    );
+    assert!(
+        explanation.contains("Shift+Pause"),
+        "the working combination is not named: {explanation}"
+    );
+}
+
+/// The state distinguishes which one failed. A conflict on the case shortcut and a conflict on
+/// the conversion shortcut are different problems with different consequences.
+#[test]
+fn a_conflict_records_which_shortcut_is_unavailable() {
+    let case_only = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Registered("Shift+Pause".into()),
+            case: Shortcut::Conflict("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
+    let convert_only = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Conflict("Shift+Pause".into()),
+            case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
+    assert_ne!(case_only, convert_only);
+    assert_ne!(case_only.summary(), convert_only.summary());
+}
+
+/// When both are held there is nothing to reassure the user about, and the message must not
+/// invent something that still works.
+#[test]
+fn both_conflicting_claims_no_working_shortcut() {
+    let s = AgentState::resolve(
+        3,
+        Shortcuts {
+            convert: Shortcut::Conflict("Shift+Pause".into()),
+            case: Shortcut::Conflict("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
+    match &s {
+        AgentState::ShortcutConflict {
+            unavailable,
+            working,
+        } => {
+            assert_eq!(unavailable.len(), 2);
+            assert!(working.is_empty(), "{working:?}");
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+    // Both transactions are still reachable from the tray, which is the whole reason the tray
+    // commands exist.
+    assert!(s.converts());
+    assert!(s.explanation().to_lowercase().contains("tray"));
+}
+
+/// The tooltip names both shortcuts when both work: this is the only place either is visible
+/// without opening the configuration file.
+#[test]
+fn the_summary_names_both_working_shortcuts() {
+    let s = AgentState::resolve(2, both_registered(), true, None);
+    let summary = s.summary();
+    assert!(summary.contains("Shift+Pause"), "{summary}");
+    assert!(summary.contains("Win+Ctrl+Pause"), "{summary}");
+}
+
+/// A tray tooltip is truncated by Windows past 128 characters, so a message that names two
+/// combinations still has to fit in one.
+#[test]
+fn summaries_fit_a_tray_tooltip() {
+    let states = [
+        AgentState::resolve(3, both_registered(), true, None),
+        AgentState::resolve(
+            3,
+            Shortcuts {
+                convert: Shortcut::Conflict("Ctrl+Alt+Shift+Insert".into()),
+                case: Shortcut::Conflict("Ctrl+Alt+Shift+PageDown".into()),
+            },
+            true,
+            None,
+        ),
+    ];
+    for s in &states {
+        let n = s.summary().chars().count();
+        assert!(n <= 127, "{n} characters is too long for a tooltip: {}", s.summary());
+    }
+}
+
+// --- precedence ----------------------------------------------------------------------
 
 /// A runtime failure is distinct from every other state and carries its own detail.
 #[test]
 fn a_runtime_error_is_its_own_state() {
     let s = AgentState::resolve(
         3,
-        Shortcut::Registered("Shift+Pause".into()),
+        both_registered(),
         true,
         Some("layout tables could not be built".into()),
     );
@@ -89,7 +229,15 @@ fn a_runtime_error_is_its_own_state() {
 /// shortcut first would leave a working shortcut that still cannot convert anything.
 #[test]
 fn the_most_blocking_condition_wins() {
-    let s = AgentState::resolve(1, Shortcut::Conflict("Shift+Pause".into()), true, None);
+    let s = AgentState::resolve(
+        1,
+        Shortcuts {
+            convert: Shortcut::Conflict("Shift+Pause".into()),
+            case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
     assert_eq!(s, AgentState::TooFewLayouts { installed: 1 });
 }
 
@@ -98,7 +246,10 @@ fn the_most_blocking_condition_wins() {
 fn a_runtime_error_outranks_the_rest() {
     let s = AgentState::resolve(
         1,
-        Shortcut::Conflict("Shift+Pause".into()),
+        Shortcuts {
+            convert: Shortcut::Conflict("Shift+Pause".into()),
+            case: Shortcut::Conflict("Win+Ctrl+Pause".into()),
+        },
         false,
         Some("boom".into()),
     );
@@ -109,7 +260,7 @@ fn a_runtime_error_outranks_the_rest() {
 /// would be a surprise.
 #[test]
 fn disabled_does_not_mask_a_blocking_condition() {
-    let s = AgentState::resolve(1, Shortcut::Registered("Shift+Pause".into()), false, None);
+    let s = AgentState::resolve(1, both_registered(), false, None);
     assert_eq!(s, AgentState::TooFewLayouts { installed: 1 });
 }
 
@@ -118,16 +269,19 @@ fn disabled_does_not_mask_a_blocking_condition() {
 #[test]
 fn every_state_is_distinguishable() {
     let states = [
-        AgentState::resolve(3, Shortcut::Registered("Shift+Pause".into()), true, None),
-        AgentState::resolve(3, Shortcut::Registered("Shift+Pause".into()), false, None),
-        AgentState::resolve(1, Shortcut::Registered("Shift+Pause".into()), true, None),
-        AgentState::resolve(3, Shortcut::Conflict("Shift+Pause".into()), true, None),
+        AgentState::resolve(3, both_registered(), true, None),
+        AgentState::resolve(3, both_registered(), false, None),
+        AgentState::resolve(1, both_registered(), true, None),
         AgentState::resolve(
             3,
-            Shortcut::Registered("Shift+Pause".into()),
+            Shortcuts {
+                convert: Shortcut::Conflict("Shift+Pause".into()),
+                case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+            },
             true,
-            Some("boom".into()),
+            None,
         ),
+        AgentState::resolve(3, both_registered(), true, Some("boom".into())),
     ];
 
     let mut summaries: Vec<String> = states.iter().map(|s| s.summary()).collect();
@@ -141,13 +295,7 @@ fn every_state_is_distinguishable() {
     }
 }
 
-/// The tooltip names the shortcut when there is a working one, because the whole interface is
-/// otherwise invisible: a tray icon with no hint of how to invoke it teaches nothing.
-#[test]
-fn the_summary_names_a_working_shortcut() {
-    let s = AgentState::resolve(2, Shortcut::Registered("Ctrl+Alt+K".into()), true, None);
-    assert!(s.summary().contains("Ctrl+Alt+K"), "{}", s.summary());
-}
+// --- suggestions ---------------------------------------------------------------------
 
 /// Suggestions never include the combination the user already has, which is the one thing
 /// known not to work.

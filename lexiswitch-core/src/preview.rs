@@ -72,29 +72,49 @@ pub fn compact(text: &str, compare_to: &str, width: usize) -> Preview {
 /// Falls back to the start of the text when the two are identical, so a caller comparing a
 /// string against itself gets the beginning rather than a panic.
 ///
-/// Compared positionally, which is what conversion produces: every candidate is the original
-/// mapped character for character, so position *i* of one corresponds to position *i* of the
-/// other. This is not a diff and must not be mistaken for one — it would be wrong for text
-/// where characters were inserted or removed, which conversion never does.
+/// Found by trimming the matching ends: everything the two strings share at the front, and
+/// everything they share at the back, is not the change. What is left between them is.
+///
+/// This is not a diff and does not try to be — it finds one contiguous region, so two separate
+/// edits are reported as a single span covering both. That is the right answer for a preview,
+/// which has one window to place.
+///
+/// It replaces a position-by-position comparison, which was correct only because layout
+/// conversion maps character for character and so can never shift anything. Case conversion
+/// shifts constantly: `snake_case` inserts separators, stripping removes characters, and German
+/// `ß` uppercases to two characters. Under a positional comparison one inserted character makes
+/// every character after it compare unequal, so the "changed region" becomes the whole rest of
+/// the string and the window lands on its midpoint — which is nowhere near the change.
 fn changed_span(chars: &[char], compare_to: &str) -> (usize, usize) {
     let other: Vec<char> = compare_to.chars().collect();
 
-    let first = chars
+    let prefix = chars
         .iter()
         .zip(other.iter())
-        .position(|(a, b)| a != b)
-        // Where one is a prefix of the other, the difference starts where the shorter ends.
-        .unwrap_or_else(|| chars.len().min(other.len()));
+        .take_while(|(a, b)| a == b)
+        .count();
 
-    let last = chars
-        .iter()
-        .zip(other.iter())
-        .rposition(|(a, b)| a != b)
-        .unwrap_or(first);
-
-    if first >= chars.len() {
-        // Identical as far as both go: nothing to favour, so favour the start.
+    if prefix == chars.len() && prefix == other.len() {
+        // Identical: nothing to favour, so favour the start.
         return (0, 0);
     }
-    (first, last.max(first))
+
+    // Capped so the matching tail cannot reach back through the matching head. Without this,
+    // a string like `aaa` against `aaaaa` counts the same characters at both ends and the
+    // region comes out inverted.
+    let room = (chars.len() - prefix).min(other.len() - prefix);
+    let suffix = chars
+        .iter()
+        .rev()
+        .zip(other.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(room);
+
+    // `first` may sit one past the last shared character and `last` one before it: that is a
+    // pure deletion, where the changed region in *this* string is empty and the position it
+    // happened at is the only meaningful answer.
+    let first = prefix.min(chars.len().saturating_sub(1));
+    let last = (chars.len() - suffix).saturating_sub(1).max(first);
+    (first, last)
 }

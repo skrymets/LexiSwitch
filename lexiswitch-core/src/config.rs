@@ -73,6 +73,9 @@ impl Chooser {
 #[serde(default)]
 pub struct Hotkeys {
     pub convert_selection: String,
+    /// Opens the case window. A separate transaction, so a separate binding
+    /// ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)).
+    pub change_case: String,
     #[serde(flatten)]
     unknown: Unknown,
 }
@@ -127,6 +130,9 @@ impl Default for Hotkeys {
     fn default() -> Self {
         Self {
             convert_selection: "Shift+Pause".into(),
+            // Next to the first on the same physical key, so the pair is learned as one
+            // gesture rather than two unrelated combinations.
+            change_case: "Win+Ctrl+Pause".into(),
             unknown: Unknown::new(),
         }
     }
@@ -187,9 +193,54 @@ impl Config {
                 "convert_selection cannot be empty; give a binding such as \"Shift+Pause\"",
             ));
         }
+        if self.hotkeys.change_case.trim().is_empty() {
+            return Err(ConfigError::at(
+                text,
+                "hotkeys",
+                "change_case",
+                "change_case cannot be empty; give a binding such as \"Win+Ctrl+Pause\"",
+            ));
+        }
+        // Caught here rather than at registration, where it would surface as
+        // ERROR_HOTKEY_ALREADY_REGISTERED and read as another application's fault. Compared
+        // loosely because "Shift+Pause" and " shift + pause " are the same combination to
+        // Windows and differ only in how they were typed into the file.
+        if same_binding(
+            &self.hotkeys.convert_selection,
+            &self.hotkeys.change_case,
+        ) {
+            return Err(ConfigError::at(
+                text,
+                "hotkeys",
+                "change_case",
+                "change_case and convert_selection cannot be the same combination; one \
+                 combination cannot open two different windows",
+            ));
+        }
 
         Ok(())
     }
+}
+
+/// Whether two written bindings name the same combination.
+///
+/// Spelling is not the question: `RegisterHotKey` sees modifiers and a virtual key, so
+/// `"Shift+Pause"` and `" shift + pause "` are one combination written two ways. Compared
+/// component by component rather than as whole strings, because `"Ctrl+Shift+K"` and
+/// `"Shift+Ctrl+K"` are also the same and a trimmed case-insensitive string compare would miss
+/// it. Order within the combination is the user's, not a fact about the binding.
+fn same_binding(a: &str, b: &str) -> bool {
+    fn parts(text: &str) -> Vec<String> {
+        let mut v: Vec<String> = text
+            .split('+')
+            .map(|p| p.trim().to_ascii_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
+        v.sort();
+        v
+    }
+    let (a, b) = (parts(a), parts(b));
+    !a.is_empty() && a == b
 }
 
 /// A configuration that could not be used, and where the problem is.

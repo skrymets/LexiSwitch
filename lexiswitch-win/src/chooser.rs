@@ -39,20 +39,17 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
     IntersectClipRect, InvalidateRect, RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor,
-    COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
-    COLOR_WINDOWTEXT, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT,
-    DT_SINGLELINE, DT_WORDBREAK, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
+    COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT,
+    DT_CALCRECT, DT_NOPREFIX, DT_WORDBREAK, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, RegisterClassW,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_CLOSE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WNDCLASSW,
-    WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
+    GetWindowLongPtrW, LoadCursorW, RegisterClassW, SetWindowLongPtrW, SetWindowPos,
+    TranslateMessage, CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOZORDER, WM_ACTIVATE, WM_CLOSE, WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_BORDER,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::winui;
@@ -106,33 +103,13 @@ struct Chooser<'a> {
     /// First visible line of the expanded view.
     scroll: usize,
     decision: Option<Decision>,
-    /// Whether losing activation should be treated as the user clicking away.
-    ///
-    /// Not armed until the window has actually settled in the foreground. Taking the foreground
-    /// from another process produces a burst of activate/deactivate/activate before anything
-    /// the user did: `ShowWindow` activates the window, handing the foreground across processes
-    /// deactivates it again, and only then does it come to the front for real. Arming on the
-    /// first activation read that transient as a click elsewhere and cancelled the transaction
-    /// before the modal loop had even started, which is what made the chooser flash and vanish.
-    armed: bool,
-    font: HFONT,
-    bold: HFONT,
-    /// Pixel height of one row in the candidate list: the font's height plus breathing room.
-    line_height: i32,
-    /// Pixel height of one *wrapped* line as `DrawTextW` lays it out — the font's height plus
-    /// its external leading, with none of the row padding.
-    ///
-    /// Kept apart from `line_height` because the expanded view scrolls and clips against lines
-    /// that GDI positions, not rows this code positions. Using the padded value there stepped
-    /// the scroll further than one line and put the clip boundary in the middle of a line,
-    /// leaving a half-drawn row that reads as corruption.
-    text_line: i32,
-    /// Approximate pixel width of one character, for turning a pixel width into the character
-    /// count [`compact`] works in.
-    char_width: i32,
+    /// Whether losing activation should be treated as the user clicking away. See
+    /// [`winui::Activation`], which exists because this rule was got wrong once it was copied.
+    activation: winui::Activation,
+    /// Fonts, measurements and drawing.
+    pen: winui::Pen,
     /// How many wrapped lines the expanded view shows, from configuration.
     expanded_lines: i32,
-    scale: i32,
 }
 
 /// Open the chooser and block until the user decides.
@@ -172,9 +149,6 @@ pub fn show(
         let _ = RegisterClassW(&class);
     }
 
-    let scale = winui::dpi_scale();
-    let (font, bold) = (winui::ui_font(scale, false), winui::ui_font(scale, true));
-    let (line_height, text_line, char_width) = winui::metrics(font, scale);
     let mut state = Chooser {
         original,
         candidates,
@@ -184,18 +158,13 @@ pub fn show(
         resized: false,
         scroll: 0,
         decision: None,
-        armed: false,
-        font,
-        bold,
-        line_height,
-        text_line,
-        char_width,
+        activation: winui::Activation::new(),
+        pen: winui::Pen::new(winui::dpi_scale()),
         expanded_lines: if expanded_lines > 0 {
             expanded_lines
         } else {
             EXPANDED_LINES
         },
-        scale,
     };
 
     let (x, y, width, height) = geometry(&state);
@@ -227,41 +196,17 @@ pub fn show(
     }
     .map_err(|e| WinError::new("CreateWindowExW", e))?;
 
-    // SAFETY: `hwnd` was just created by this function and is still alive.
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-    }
     // A chooser that is not in front receives no keys, and its modal loop has no way out —
     // Escape would go to whatever kept the foreground. Refusing is the only outcome that is
     // not a hang, and it leaves the transaction to be cancelled cleanly by the caller.
-    // Retried because losing a race against another window activating is recoverable, unlike
-    // the restriction itself.
-    let mut foreground = false;
-    for attempt in 0..3 {
-        if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-        }
-        let took = winui::take_foreground(hwnd);
-        #[cfg(feature = "chooser-diag")]
-        eprintln!("[chooser] force_foreground attempt {attempt} -> {took}");
-        if took {
-            foreground = true;
-            break;
-        }
-    }
-    if !foreground {
-        // SAFETY: `hwnd` was created above and has not been destroyed elsewhere.
+    if !state.activation.present(hwnd) {
+        // SAFETY: `hwnd` was created above and has not been destroyed elsewhere. The fonts go
+        // with `state` when this function returns.
         unsafe {
             let _ = DestroyWindow(hwnd);
-            let _ = DeleteObject(HGDIOBJ(font.0));
-            let _ = DeleteObject(HGDIOBJ(bold.0));
         }
         return Err(WinError::last("SetForegroundWindow"));
     }
-
-    // Only now is losing the foreground meaningful: everything before this point is the
-    // handoff settling, and reacting to it cancels a transaction the user never abandoned.
-    state.armed = true;
 
     // A modal loop of this window's own. It runs on the worker thread, so the main loop — and
     // with it the tray — keeps running while the chooser is open.
@@ -284,15 +229,10 @@ pub fn show(
     }
 
     // SAFETY: `hwnd` was created here and has not been destroyed elsewhere. It must go before
-    // `state` does, because the window procedure dereferences the pointer to it.
+    // `state` does, because the window procedure dereferences the pointer to it — and because
+    // the fonts `state` owns must not be deleted while a paint could still select them.
     unsafe {
         let _ = DestroyWindow(hwnd);
-    }
-    // SAFETY: both fonts were created by `fonts` and are no longer selected into any DC — the
-    // paint handler restores the previous object before returning.
-    unsafe {
-        let _ = DeleteObject(HGDIOBJ(font.0));
-        let _ = DeleteObject(HGDIOBJ(bold.0));
     }
 
     Ok(state.decision.unwrap_or(Decision::Cancel))
@@ -305,7 +245,7 @@ pub fn show(
 /// is deliberately deferred, because it needs caret geometry, edge repositioning and an overlay
 /// that would cover the very text under review.
 fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
-    let scale = state.scale;
+    let scale = state.pen.scale;
     let work = winui::work_area();
     // Never wider or taller than the screen it has to fit on.
     let width = (760 * scale).min(work.right - work.left - 40 * scale);
@@ -323,14 +263,14 @@ impl Chooser<'_> {
     /// This is what stopped the footer being clipped: the layout advances by measured text
     /// metrics, so the height must be built from the same ones rather than from round numbers.
     fn height_for(&self, expanded: bool) -> i32 {
-        let scale = self.scale;
+        let scale = self.pen.scale;
         let pad = 14 * scale;
-        let line = self.line_height;
+        let line = self.pen.line_height;
         let body = if expanded {
             // The candidate's own heading, room for a useful number of wrapped lines, and the
             // scroll position. Without this the window kept its list height and "expanded"
             // showed a single line, which is not an expansion of anything.
-            line + self.expanded_lines * self.text_line + line
+            line + self.expanded_lines * self.pen.text_line + line
         } else {
             // One line either way: with no candidates that line carries the explanation.
             (self.candidates.len() as i32).max(2) * line
@@ -441,7 +381,7 @@ impl Chooser<'_> {
         if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
             return;
         }
-        let scale = self.scale;
+        let scale = self.pen.scale;
         let pad = 14 * scale;
 
         // SAFETY: `hdc` is the device context BeginPaint returned and is valid until EndPaint.
@@ -454,7 +394,7 @@ impl Chooser<'_> {
         }
 
         // SAFETY: as above; the previous font is restored at the end of this function.
-        let previous = unsafe { SelectObject(hdc, HGDIOBJ(self.font.0)) };
+        let previous = unsafe { SelectObject(hdc, HGDIOBJ(self.pen.face().0)) };
 
         let text_colour = COLORREF(
             // SAFETY: no preconditions; returns a colour for a documented system index.
@@ -468,11 +408,11 @@ impl Chooser<'_> {
         let inner = full - pad * 2;
 
         // --- header ------------------------------------------------------------------
-        self.draw(hdc, "Convert selection", pad, y, inner, text_colour, true);
+        self.pen.draw(hdc, "Convert selection", pad, y, inner, text_colour, true);
         if let Some(active) = self.active {
             // Labelled "Typing in", never "from": the active layout is context, and presenting
             // it as any candidate's source is precisely the confusion the spec forbids.
-            self.draw_right(
+            self.pen.draw_right(
                 hdc,
                 &format!("Typing in {active}"),
                 pad,
@@ -481,11 +421,11 @@ impl Chooser<'_> {
                 dim,
             );
         }
-        y += self.line_height + 4 * scale;
+        y += self.pen.line_height + 4 * scale;
 
-        let chars = (inner / self.char_width).max(8) as usize;
+        let chars = (inner / self.pen.char_width).max(8) as usize;
         let original = compact(self.original, self.original, chars.saturating_sub(10));
-        self.draw(
+        self.pen.draw(
             hdc,
             &format!("Selected  {}", decorate(&original)),
             pad,
@@ -494,8 +434,8 @@ impl Chooser<'_> {
             dim,
             false,
         );
-        y += self.line_height + 6 * scale;
-        self.rule(hdc, pad, y, full - pad);
+        y += self.pen.line_height + 6 * scale;
+        self.pen.rule(hdc, pad, y, full - pad);
         y += 8 * scale;
 
         // --- body --------------------------------------------------------------------
@@ -508,10 +448,10 @@ impl Chooser<'_> {
         }
 
         // --- footer ------------------------------------------------------------------
-        self.rule(hdc, pad, y, full - pad);
+        self.pen.rule(hdc, pad, y, full - pad);
         y += 8 * scale;
         if self.candidates.is_empty() {
-            self.draw(hdc, "Esc close", pad, y, inner, dim, false);
+            self.pen.draw(hdc, "Esc close", pad, y, inner, dim, false);
             // SAFETY: restoring the object that was selected before this function ran.
             unsafe {
                 SelectObject(hdc, previous);
@@ -519,7 +459,7 @@ impl Chooser<'_> {
             return;
         }
         let target = &self.candidates[self.selected].to;
-        self.draw(
+        self.pen.draw(
             hdc,
             &format!(
                 "\u{2191}\u{2193} {}    Enter apply    Space {}    Esc cancel",
@@ -532,10 +472,10 @@ impl Chooser<'_> {
             dim,
             false,
         );
-        y += self.line_height;
+        y += self.pen.line_height;
         // Task 3.7: the layout a switching commit would activate is named before the user
         // commits, not discovered afterwards.
-        self.draw(
+        self.pen.draw(
             hdc,
             &format!("Ctrl+Enter apply and switch typing to {target}"),
             pad,
@@ -566,9 +506,9 @@ impl Chooser<'_> {
         text_colour: COLORREF,
         dim: COLORREF,
     ) -> i32 {
-        self.draw(hdc, "No conversion found", pad, y, inner, text_colour, true);
-        y += self.line_height;
-        self.draw(
+        self.pen.draw(hdc, "No conversion found", pad, y, inner, text_colour, true);
+        y += self.pen.line_height;
+        self.pen.draw(
             hdc,
             "Every installed layout produces the text that is already there. Nothing was \
              changed.",
@@ -578,7 +518,7 @@ impl Chooser<'_> {
             dim,
             false,
         );
-        y + self.line_height + 4 * self.scale
+        y + self.pen.line_height + 4 * self.pen.scale
     }
 
     /// One row per candidate.
@@ -593,7 +533,7 @@ impl Chooser<'_> {
         text_colour: COLORREF,
         dim: COLORREF,
     ) -> i32 {
-        let scale = self.scale;
+        let scale = self.pen.scale;
         // Fixed columns so the layout names line up and the eye compares results, not labels.
         let label_width = 150 * scale;
         let count_width = 130 * scale;
@@ -605,7 +545,7 @@ impl Chooser<'_> {
                     left: pad - 6 * scale,
                     top: y - 3 * scale,
                     right: full - pad + 6 * scale,
-                    bottom: y + self.line_height,
+                    bottom: y + self.pen.line_height,
                 };
                 // SAFETY: `hdc` is valid for the paint and the brush is deleted immediately.
                 unsafe {
@@ -622,7 +562,7 @@ impl Chooser<'_> {
             };
             let secondary = if selected { on_row } else { dim };
 
-            self.draw(
+            self.pen.draw(
                 hdc,
                 &format!("{} \u{2192} {}", candidate.from, candidate.to),
                 pad,
@@ -635,9 +575,9 @@ impl Chooser<'_> {
             // Every row is rendered from the original selection, which is what `generate`
             // already guarantees — no candidate is derived from another's result, so moving
             // back and forth cannot compound.
-            let room = (inner - label_width - count_width) / self.char_width;
+            let room = (inner - label_width - count_width) / self.pen.char_width;
             let preview = compact(&candidate.text, self.original, (room.max(8)) as usize);
-            self.draw(
+            self.pen.draw(
                 hdc,
                 &decorate(&preview),
                 pad + label_width,
@@ -650,7 +590,7 @@ impl Chooser<'_> {
             // Task 3.4: a partial conversion that looks complete is how a user ends up with
             // half-corrected text and no idea, so the count is shown rather than inferred.
             if candidate.unchanged > 0 {
-                self.draw_right(
+                self.pen.draw_right(
                     hdc,
                     &format!("{} unchanged", candidate.unchanged),
                     pad,
@@ -659,7 +599,7 @@ impl Chooser<'_> {
                     secondary,
                 );
             }
-            y += self.line_height;
+            y += self.pen.line_height;
         }
         y + 4 * scale
     }
@@ -676,17 +616,17 @@ impl Chooser<'_> {
         text_colour: COLORREF,
         dim: COLORREF,
     ) -> i32 {
-        let scale = self.scale;
+        let scale = self.pen.scale;
         let candidate = &self.candidates[self.selected];
         // Where the body has to stop: the footer's two lines, its rule, and the padding under
         // it, plus one line kept back for the scroll position. That line is reserved whether or
         // not there is anything to scroll, so the text does not shift under the reader the
         // moment the indicator appears.
-        let footer = self.line_height * 2 + 8 * scale + 1.max(scale) + 14 * scale;
-        let indicator_y = client.bottom - footer - self.line_height;
+        let footer = self.pen.line_height * 2 + 8 * scale + 1.max(scale) + 14 * scale;
+        let indicator_y = client.bottom - footer - self.pen.line_height;
         let bottom = indicator_y;
 
-        self.draw(
+        self.pen.draw(
             hdc,
             &format!(
                 "{} \u{2192} {}   (Space closes, \u{2191}\u{2193} scrolls)",
@@ -698,7 +638,7 @@ impl Chooser<'_> {
             dim,
             false,
         );
-        let top = y + self.line_height;
+        let top = y + self.pen.line_height;
 
         let mut wide: Vec<u16> = candidate.text.encode_utf16().collect();
 
@@ -724,18 +664,18 @@ impl Chooser<'_> {
 
         // Clamp the scroll so it cannot run off the end into blank space. One line is always
         // left visible, so scrolling never empties the view.
-        let visible = ((bottom - top) / self.text_line).max(1);
-        let total = ((measured.bottom - measured.top) / self.text_line).max(1);
+        let visible = ((bottom - top) / self.pen.text_line).max(1);
+        let total = ((measured.bottom - measured.top) / self.pen.text_line).max(1);
         let max_scroll = (total - visible).max(0) as usize;
         self.scroll = self.scroll.min(max_scroll);
 
         // Clip to a whole number of lines. Stopping partway through one leaves a sliced row of
         // half-glyphs, which looks like a drawing fault rather than like more text below.
-        let clipped_bottom = top + visible * self.text_line;
+        let clipped_bottom = top + visible * self.pen.text_line;
 
         let mut rect = RECT {
             left: pad,
-            top: top - (self.scroll as i32 * self.text_line),
+            top: top - (self.scroll as i32 * self.pen.text_line),
             right: client.right - pad,
             bottom: clipped_bottom,
         };
@@ -761,7 +701,7 @@ impl Chooser<'_> {
         // Say so when there is more text than fits, rather than leaving the user to discover
         // it by pressing an arrow and watching nothing happen.
         if max_scroll > 0 {
-            self.draw(
+            self.pen.draw(
                 hdc,
                 &format!("line {} of {}", self.scroll + 1, max_scroll + 1),
                 pad,
@@ -771,79 +711,7 @@ impl Chooser<'_> {
                 false,
             );
         }
-        indicator_y + self.line_height + 4 * scale
-    }
-
-    /// One line of text in a fixed box, clipped with an ellipsis if it somehow overflows.
-    #[allow(clippy::too_many_arguments)]
-    fn draw(
-        &self,
-        hdc: HDC,
-        text: &str,
-        x: i32,
-        y: i32,
-        width: i32,
-        colour: COLORREF,
-        emphasised: bool,
-    ) {
-        let mut rect = RECT {
-            left: x,
-            top: y,
-            right: x + width,
-            bottom: y + self.line_height,
-        };
-        let mut wide: Vec<u16> = text.encode_utf16().collect();
-        let face = if emphasised { self.bold } else { self.font };
-        // SAFETY: `hdc` is valid for the paint, `wide` and `rect` live for the whole call, and
-        // the font is restored immediately afterwards.
-        unsafe {
-            let previous = SelectObject(hdc, HGDIOBJ(face.0));
-            SetTextColor(hdc, colour);
-            DrawTextW(
-                hdc,
-                &mut wide,
-                &mut rect,
-                DT_SINGLELINE | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS,
-            );
-            SelectObject(hdc, previous);
-        }
-    }
-
-    /// One line of text against the right edge.
-    fn draw_right(&self, hdc: HDC, text: &str, pad: i32, y: i32, inner: i32, colour: COLORREF) {
-        let mut rect = RECT {
-            left: pad,
-            top: y,
-            right: pad + inner,
-            bottom: y + self.line_height,
-        };
-        let mut wide: Vec<u16> = text.encode_utf16().collect();
-        // SAFETY: as in `draw`.
-        unsafe {
-            SetTextColor(hdc, colour);
-            DrawTextW(
-                hdc,
-                &mut wide,
-                &mut rect,
-                DT_SINGLELINE | DT_RIGHT | DT_NOPREFIX | DT_END_ELLIPSIS,
-            );
-        }
-    }
-
-    /// A horizontal separator.
-    fn rule(&self, hdc: HDC, left: i32, y: i32, right: i32) {
-        let rect = RECT {
-            left,
-            top: y,
-            right,
-            bottom: y + 1.max(self.scale),
-        };
-        // SAFETY: `hdc` is valid for the paint and the brush is deleted immediately.
-        unsafe {
-            let brush = CreateSolidBrush(COLORREF(GetSysColor(COLOR_BTNFACE)));
-            FillRect(hdc, &rect, brush);
-            let _ = DeleteObject(HGDIOBJ(brush.0));
-        }
+        indicator_y + self.pen.line_height + 4 * scale
     }
 }
 
@@ -923,7 +791,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             None,
                             0,
                             0,
-                            760 * state.scale,
+                            760 * state.pen.scale,
                             height,
                             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
                         );
@@ -938,26 +806,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             LRESULT(0)
         }
         // Clicking away is a cancellation, not an invitation to leave a chooser stranded on
-        // screen holding a transaction open. The first activation is skipped because taking
-        // the foreground produces one before the user has done anything.
+        // screen holding a transaction open. What counts as clicking away is `Activation`'s to
+        // decide: the transients of the foreground handoff are not it.
         WM_ACTIVATE => {
             #[cfg(feature = "chooser-diag")]
             eprintln!(
-                "[chooser] WM_ACTIVATE state=0x{:04X} other=0x{:X} armed={}",
+                "[chooser] WM_ACTIVATE state=0x{:04X} other=0x{:X}",
                 wp.0 & 0xFFFF,
-                lp.0,
-                state.armed
+                lp.0
             );
-            if (wp.0 & 0xFFFF) == WA_INACTIVE as usize && state.armed && state.decision.is_none()
-            {
-                // Confirmed against the window manager rather than trusted from the message.
-                // A deactivation that leaves us still in front is a transient of the handoff,
-                // not a user walking away, and cancelling on it discards a live transaction.
-                // SAFETY: no preconditions.
-                let front = unsafe { GetForegroundWindow() };
-                if front != hwnd {
-                    state.decision = Some(Decision::Cancel);
-                }
+            if state.decision.is_none() && state.activation.is_departure(hwnd, wp.0) {
+                state.decision = Some(Decision::Cancel);
             }
             LRESULT(0)
         }

@@ -28,7 +28,7 @@
 
 use std::io::Write;
 
-use lexiswitch_core::state::{AgentState, Shortcut};
+use lexiswitch_core::state::{AgentState, Shortcut, Shortcuts};
 use lexiswitch_win::tray::{Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
 use windows::Win32::Foundation::HWND;
@@ -89,7 +89,15 @@ fn main() {
     say!("probe_tray — the product's tray code against a raw control, same window.");
     say!("  window: {:?}", window.hwnd().0);
 
-    let state = AgentState::resolve(2, Shortcut::Registered("Shift+Pause".into()), true, None);
+    let state = AgentState::resolve(
+        2,
+        Shortcuts {
+            convert: Shortcut::Registered("Shift+Pause".into()),
+            case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+        },
+        true,
+        None,
+    );
     let tray = Tray::new(window.hwnd(), &state).expect("tray");
     say!("  uID 1  added by the product's Tray");
 

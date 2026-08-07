@@ -18,8 +18,10 @@
 #![forbid(unsafe_code)]
 
 pub mod candidates;
+pub mod casing;
 pub mod config;
 pub mod convert;
 pub mod layout;
 pub mod preview;
 pub mod state;
+pub mod usage;

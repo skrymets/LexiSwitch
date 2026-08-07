@@ -82,6 +82,8 @@ pub enum MenuCommand {
     ConvertSelection = 104,
     ChangeShortcut = 105,
     Diagnostics = 106,
+    ChangeCase = 107,
+    ChangeCaseShortcut = 108,
 }
 
 impl MenuCommand {
@@ -93,6 +95,8 @@ impl MenuCommand {
             104 => Some(Self::ConvertSelection),
             105 => Some(Self::ChangeShortcut),
             106 => Some(Self::Diagnostics),
+            107 => Some(Self::ChangeCase),
+            108 => Some(Self::ChangeCaseShortcut),
             103 => Some(Self::Quit),
             _ => None,
         }
@@ -165,6 +169,15 @@ impl Tray {
                 MenuCommand::ConvertSelection as usize,
                 w!("Convert selection"),
             );
+            // The case transaction gets the same treatment for the same reason: it has its own
+            // shortcut, so it has its own way of being unavailable, and a conflict on it must
+            // not leave the feature unreachable.
+            let _ = AppendMenuW(
+                menu,
+                if state.converts() { MF_STRING } else { MF_GRAYED },
+                MenuCommand::ChangeCase as usize,
+                w!("Change case…"),
+            );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
 
             let toggle = if matches!(state, AgentState::Disabled) {
@@ -181,7 +194,13 @@ impl Tray {
                 menu,
                 MF_STRING,
                 MenuCommand::ChangeShortcut as usize,
-                w!("Change shortcut…"),
+                w!("Change conversion shortcut…"),
+            );
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                MenuCommand::ChangeCaseShortcut as usize,
+                w!("Change case shortcut…"),
             );
             let _ = AppendMenuW(
                 menu,

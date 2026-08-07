@@ -13,7 +13,7 @@
 //! This module decides which state holds and what it means. It knows nothing about Windows,
 //! which is what lets the precedence rules be tested without one.
 
-/// Whether the invocation shortcut is bound.
+/// Whether one invocation shortcut is bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shortcut {
     /// Registered, and this is the combination.
@@ -24,10 +24,40 @@ pub enum Shortcut {
 }
 
 impl Shortcut {
-    fn binding(&self) -> &str {
+    pub fn binding(&self) -> &str {
         match self {
             Self::Registered(b) | Self::Conflict(b) => b,
         }
+    }
+
+    fn registered(&self) -> bool {
+        matches!(self, Self::Registered(_))
+    }
+}
+
+/// Every shortcut the agent wants, and how each one fared.
+///
+/// There is one per transaction: conversion and case change are separate invocations
+/// ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)). They are
+/// carried together because a conflict is not a single fact any more — the user needs to know
+/// which combination is unavailable *and* that the other one still works, and neither half is
+/// useful without the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shortcuts {
+    pub convert: Shortcut,
+    pub case: Shortcut,
+}
+
+impl Shortcuts {
+    /// Each shortcut with a phrase describing what it does, in the order they are shown.
+    ///
+    /// The phrases live here rather than at the point of formatting so that every message about
+    /// a shortcut describes it the same way.
+    fn described(&self) -> [(&Shortcut, &'static str); 2] {
+        [
+            (&self.convert, "converts the selection"),
+            (&self.case, "changes case"),
+        ]
     }
 }
 
@@ -39,15 +69,22 @@ impl Shortcut {
 /// and leave them with a working shortcut that still converts nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentState {
-    /// Everything works. Carries the registered combination, because the tray tooltip is the
-    /// only place the shortcut is visible without opening the configuration file.
-    Enabled { binding: String },
+    /// Everything works. Carries both registered combinations, because the tray tooltip is the
+    /// only place either is visible without opening the configuration file.
+    Enabled { convert: String, case: String },
     /// Switched off by the user. Not a problem, and not something to nag about.
     Disabled,
     /// Fewer than two layouts: there is nothing to convert into.
     TooFewLayouts { installed: usize },
-    /// The shortcut is held elsewhere. Conversion still works from the tray.
-    ShortcutConflict { binding: String },
+    /// At least one shortcut is held elsewhere. Both transactions still work from the tray.
+    ///
+    /// Carries what did *not* register and what did, each with a phrase describing it. Naming
+    /// only the failure would leave the user unable to tell a half-working agent from a dead
+    /// one — and with two shortcuts, half-working is the likeliest kind of conflict there is.
+    ShortcutConflict {
+        unavailable: Vec<(String, &'static str)>,
+        working: Vec<(String, &'static str)>,
+    },
     /// Something failed at runtime and nothing else can be relied on.
     RuntimeError { detail: String },
 }
@@ -58,7 +95,7 @@ impl AgentState {
     /// The order of the checks *is* the precedence, most blocking first.
     pub fn resolve(
         layouts: usize,
-        shortcut: Shortcut,
+        shortcuts: Shortcuts,
         enabled: bool,
         error: Option<String>,
     ) -> Self {
@@ -73,16 +110,26 @@ impl AgentState {
         }
         // Ahead of `enabled`, so switching off does not hide something the user must act on.
         // Otherwise turning it back on later would produce a surprise instead of a conversion.
-        if let Shortcut::Conflict(binding) = &shortcut {
+        let described = shortcuts.described();
+        if described.iter().any(|(s, _)| !s.registered()) {
+            let (working, unavailable): (Vec<_>, Vec<_>) = described
+                .iter()
+                .map(|(s, what)| (s.binding().to_string(), *what, s.registered()))
+                .partition(|(_, _, ok)| *ok);
+            let strip = |v: Vec<(String, &'static str, bool)>| {
+                v.into_iter().map(|(b, w, _)| (b, w)).collect::<Vec<_>>()
+            };
             return Self::ShortcutConflict {
-                binding: binding.clone(),
+                unavailable: strip(unavailable),
+                working: strip(working),
             };
         }
         if !enabled {
             return Self::Disabled;
         }
         Self::Enabled {
-            binding: shortcut.binding().to_string(),
+            convert: shortcuts.convert.binding().to_string(),
+            case: shortcuts.case.binding().to_string(),
         }
     }
 
@@ -119,13 +166,15 @@ impl AgentState {
     /// without opening the configuration file.
     pub fn summary(&self) -> String {
         match self {
-            Self::Enabled { binding } => format!("LexiSwitch — {binding} converts the selection"),
+            Self::Enabled { convert, case } => {
+                format!("LexiSwitch — {convert} converts, {case} changes case")
+            }
             Self::Disabled => "LexiSwitch — disabled".to_string(),
             Self::TooFewLayouts { installed } => {
                 format!("LexiSwitch — {installed} keyboard layout installed, two are needed")
             }
-            Self::ShortcutConflict { binding } => {
-                format!("LexiSwitch — {binding} is unavailable")
+            Self::ShortcutConflict { unavailable, .. } => {
+                format!("LexiSwitch — {} unavailable", join(unavailable))
             }
             Self::RuntimeError { .. } => "LexiSwitch — something went wrong".to_string(),
         }
@@ -134,11 +183,11 @@ impl AgentState {
     /// The same state at length, for a balloon or a settings panel.
     pub fn explanation(&self) -> String {
         match self {
-            Self::Enabled { binding } => {
-                format!("Select text and press {binding} to convert it.")
-            }
+            Self::Enabled { convert, case } => format!(
+                "Select text and press {convert} to convert it, or {case} to change its case."
+            ),
             Self::Disabled => {
-                "The shortcut does not convert while LexiSwitch is disabled. Nothing is being \
+                "The shortcuts do not convert while LexiSwitch is disabled. Nothing is being \
                  recorded either way."
                     .to_string()
             }
@@ -147,13 +196,46 @@ impl AgentState {
                  Add a second layout in Windows settings; LexiSwitch will pick it up without \
                  being restarted."
             ),
-            Self::ShortcutConflict { binding } => format!(
-                "{binding} is already held by another application, so LexiSwitch did not take \
-                 it. Conversion still works from the tray menu. Choose a different shortcut to \
-                 use the keyboard instead."
-            ),
+            // Three sentences, and the middle one is the important one: which shortcut survived.
+            // Without it a conflict on either shortcut reads as the whole program being
+            // unavailable, and the user goes looking for a fault that is not there.
+            Self::ShortcutConflict {
+                unavailable,
+                working,
+            } => {
+                let mut out = format!(
+                    "{} already held by another application, so LexiSwitch did not take {}. ",
+                    join(unavailable),
+                    if unavailable.len() == 1 { "it" } else { "them" },
+                );
+                if !working.is_empty() {
+                    out.push_str(&format!("{} still working. ", join(working)));
+                }
+                out.push_str(
+                    "Both commands remain available from the tray menu. Choose a different \
+                     shortcut to use the keyboard instead.",
+                );
+                out
+            }
             Self::RuntimeError { detail } => format!("LexiSwitch hit a problem: {detail}"),
         }
+    }
+}
+
+/// Name some shortcuts and what they do, as one readable phrase.
+///
+/// Renders as `"Shift+Pause (converts the selection) is"` or `"A (…) and B (…) are"` — the verb
+/// is included because the caller cannot know how many there will be, and "1 shortcuts are"
+/// is the kind of detail that makes a message look machine-written.
+fn join(items: &[(String, &'static str)]) -> String {
+    let named: Vec<String> = items
+        .iter()
+        .map(|(binding, what)| format!("{binding} ({what})"))
+        .collect();
+    match named.len() {
+        0 => "nothing is".to_string(),
+        1 => format!("{} is", named[0]),
+        _ => format!("{} are", named.join(" and ")),
     }
 }
 

@@ -112,3 +112,67 @@ fn the_window_is_stable_across_widths() {
     assert!(wide.text.contains("old"));
     assert!(wide.text.chars().count() > narrow.text.chars().count());
 }
+
+// --- insertions and deletions --------------------------------------------------------
+//
+// Layout conversion maps character for character, so position *i* of a candidate always
+// corresponds to position *i* of the original. Case conversion does not: `snake_case` inserts
+// separators, stripping removes characters, and German `ß` uppercases to two characters. A
+// positional comparison against text that has shifted reports the first difference at the
+// point of the shift and the last difference at the end of the string, which is a window over
+// everything after the change rather than over the change.
+
+/// A separator inserted early must not make the whole remainder look changed.
+#[test]
+fn an_insertion_does_not_widen_the_changed_region() {
+    let original = format!("word {}", "padding ".repeat(30));
+    let converted = format!("word_{}", "padding ".repeat(30));
+    let p = compact(&converted, &original, 24);
+    assert!(
+        p.text.starts_with("word_"),
+        "the window should sit on the inserted separator, not after it: {:?}",
+        p.text
+    );
+    assert!(!p.elided_start);
+}
+
+/// A late insertion is still found, even though every character after it has moved.
+#[test]
+fn a_late_insertion_is_inside_the_window() {
+    let original = format!("{}end here", "same text ".repeat(20));
+    let converted = format!("{}end_here", "same text ".repeat(20));
+    let p = compact(&converted, &original, 24);
+    assert!(
+        p.text.contains("end_here"),
+        "the changed region is missing from {:?}",
+        p.text
+    );
+    assert!(p.elided_start);
+}
+
+/// The German case that grows the string: `ß` uppercases to `SS`, so everything after it
+/// shifts by one and a positional comparison sees the entire tail as different.
+#[test]
+fn a_growing_transform_locates_the_growth() {
+    let original = format!("{}straße{}", "x ".repeat(20), " tail".repeat(6));
+    let converted = format!("{}STRASSE{}", "x ".repeat(20), " tail".repeat(6));
+    let p = compact(&converted, &original, 24);
+    assert!(
+        p.text.contains("STRASSE"),
+        "the growth is missing from {:?}",
+        p.text
+    );
+}
+
+/// A deletion is the mirror of an insertion and must behave the same way.
+#[test]
+fn a_deletion_does_not_widen_the_changed_region() {
+    let original = format!("{}a-b{}", "pad ".repeat(20), " tail".repeat(8));
+    let converted = format!("{}ab{}", "pad ".repeat(20), " tail".repeat(8));
+    let p = compact(&converted, &original, 20);
+    assert!(p.text.contains("ab"), "{:?}", p.text);
+    assert!(
+        p.elided_end,
+        "content after the window was not signalled: {p:?}"
+    );
+}

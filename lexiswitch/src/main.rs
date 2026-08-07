@@ -188,6 +188,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     ));
                     work.send(Job::Selection {
                         tables: layouts.iter().map(|l| l.table.clone()).collect(),
+                        handles: layouts
+                            .iter()
+                            .map(|l| (l.table.name().to_string(), l.hkl))
+                            .collect(),
                         active,
                         allow_clipboard: config.selection.allow_clipboard_fallback,
                     });

@@ -10,8 +10,9 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
-use lexiswitch_core::candidates;
+use lexiswitch_core::candidates::{self, Candidate};
 use lexiswitch_core::layout::LayoutTable;
+use lexiswitch_win::chooser::{self, Decision};
 use lexiswitch_win::focus::Uia;
 use lexiswitch_win::transaction::Transaction;
 use lexiswitch_win::window::Waker;
@@ -29,6 +30,10 @@ pub enum Job {
     /// ([ADR-0012](../../docs/adr/0012-single-chooser-transaction.md)).
     Selection {
         tables: Vec<LayoutTable>,
+        /// Layout name to raw HKL, so an apply-and-switch can name a layout to Windows rather
+        /// than only to the user. Carried rather than looked up here because resolving it
+        /// needs the installed set, which lives on the message-loop thread.
+        handles: Vec<(String, u32)>,
         /// The layout active in the focused window, as a weak tiebreak on the *target* only.
         /// It is never allowed to choose a source.
         active: Option<String>,
@@ -106,6 +111,7 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
             Job::Stop => break,
             Job::Selection {
                 tables,
+                handles,
                 active,
                 allow_clipboard,
             } => {
@@ -127,39 +133,58 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                             &tables,
                             active.as_deref(),
                         );
-                        match found.first() {
+                        if found.is_empty() {
                             // A real answer, and a different one from a failure: the selection
-                            // was read fine, and no installed layout pair changes it.
-                            None => {
-                                let cancelled = transaction.cancel();
-                                Outcome::Failed {
-                                    title: "No conversion found".into(),
-                                    body: match cancelled {
-                                        Ok(()) => "No installed keyboard layout converts the                                                    selected text into anything different."
-                                            .into(),
-                                        Err(e) => format!(
-                                            "No installed keyboard layout converts the selected                                              text into anything different. Additionally: {e}"
-                                        ),
-                                    },
-                                }
+                            // was read fine, and no installed layout pair changes it. No window
+                            // is opened, because there is nothing to choose between.
+                            let cancelled = transaction.cancel();
+                            Outcome::Failed {
+                                title: "No conversion found".into(),
+                                body: match cancelled {
+                                    Ok(()) => "No installed keyboard layout converts the \
+                                               selected text into anything different."
+                                        .into(),
+                                    Err(e) => format!(
+                                        "No installed keyboard layout converts the selected \
+                                         text into anything different. Additionally: {e}"
+                                    ),
+                                },
                             }
-                            // Until the chooser exists, the highest-ranked candidate is applied
-                            // directly. That is deliberately temporary: the pivot requires that
-                            // nothing is modified before an explicit commit, and this is the
-                            // one part of that promise not yet kept.
-                            Some(best) => {
-                                let label = format!("{} to {}", best.from, best.to);
-                                match transaction.commit(&best.text) {
-                                    Ok(done) if done.lost_nontext => Outcome::Note {
-                                        title: format!("Converted, {label}"),
-                                        body: "The clipboard held an image or formatted                                                content, which the conversion destroyed. Text                                                on it was restored."
-                                            .into(),
-                                    },
-                                    Ok(_) => Outcome::Quiet,
+                        } else {
+                            // The chooser blocks this thread until the user decides. That is
+                            // why it runs here and not on the message loop: the tray has to
+                            // stay alive while a chooser is open.
+                            match chooser::show(
+                                transaction.original(),
+                                &found,
+                                active.as_deref(),
+                            ) {
+                                Err(e) => {
+                                    // The window could not take the foreground, so it could
+                                    // never have been typed into. Nothing was modified.
+                                    let _ = transaction.cancel();
+                                    Outcome::Failed {
+                                        title: "Chooser did not open".into(),
+                                        body: e.to_string(),
+                                    }
+                                }
+                                Ok(Decision::Cancel) => match transaction.cancel() {
+                                    Ok(()) => Outcome::Quiet,
                                     Err(e) => Outcome::Failed {
-                                        title: "Selection not converted".into(),
+                                        title: "Cancelled, with a loose end".into(),
                                         body: e.to_string(),
                                     },
+                                },
+                                Ok(Decision::Apply { index }) => {
+                                    apply(transaction, &found[index], None)
+                                }
+                                Ok(Decision::ApplyAndSwitch { index }) => {
+                                    let candidate = &found[index];
+                                    let hkl = handles
+                                        .iter()
+                                        .find(|(name, _)| *name == candidate.to)
+                                        .map(|(_, hkl)| *hkl);
+                                    apply(transaction, candidate, hkl)
                                 }
                             }
                         }
@@ -169,11 +194,68 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
         };
 
         if out.send(outcome).is_ok() {
+
             // Drop the result into the channel, then wake the loop so it actually looks.
             waker.wake();
         } else {
             // The message loop has gone; nothing left to report to.
             break;
         }
+    }
+}
+
+/// Replace the selection with `candidate`, optionally asking Windows for its target layout.
+///
+/// Kept apart from the message handling because the outcomes are the point: the spec requires
+/// success, a side effect, a failed replacement and an unconfirmed layout switch to be four
+/// visibly different things, and none of them may be reported as another.
+fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<u32>) -> Outcome {
+    let label = format!("{} to {}", candidate.from, candidate.to);
+
+    let committed = match transaction.commit(&candidate.text) {
+        Ok(done) => done,
+        // Never reported as success, and never partially: the transaction restores what it
+        // can before returning the error.
+        Err(e) => {
+            return Outcome::Failed {
+                title: "Selection not converted".into(),
+                body: e.to_string(),
+            }
+        }
+    };
+
+    // Only after the replacement landed. Switching the layout of a conversion that failed
+    // would leave the user typing in a language they did not ask for, on text that never
+    // changed.
+    let switch_note = match switch_to {
+        None => None,
+        Some(hkl) => match lexiswitch_win::langswitch::activate_for_foreground(hkl) {
+            // Advisory by nature: the request is posted and an application may decline it
+            // with no way for us to learn that it did. Saying "requested" rather than
+            // "switched" is the honest form of a thing that cannot be confirmed.
+            Ok(()) => Some(format!("Typing in {} was requested.", candidate.to)),
+            Err(e) => Some(format!(
+                "The text was converted, but the switch to {} failed: {e}",
+                candidate.to
+            )),
+        },
+    };
+
+    let clipboard_note = committed.lost_nontext.then(|| {
+        "The clipboard held an image or formatted content, which the conversion destroyed. \
+         Text on it was restored."
+            .to_string()
+    });
+
+    match (switch_note, clipboard_note) {
+        (None, None) => Outcome::Quiet,
+        (switch, clip) => Outcome::Note {
+            title: format!("Converted, {label}"),
+            body: [switch, clip]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" "),
+        },
     }
 }

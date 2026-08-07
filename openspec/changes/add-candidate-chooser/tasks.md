@@ -25,14 +25,14 @@ fixtures.
 
 ## 3. Chooser window
 
-- [ ] 3.1 Create a focused top-level window on the active monitor, destroyed with the transaction
-- [ ] 3.2 Render the original preview, the current Windows layout as context, and one row per candidate with source, target and result
-- [ ] 3.3 Arrow-key navigation, rendering each candidate from the original selection every time
-- [ ] 3.4 Show unchanged-character counts where a candidate converts only part of the selection
-- [ ] 3.5 Compact previews with visible truncation, favouring a region containing changed text
-- [ ] 3.6 Expand and collapse the selected candidate, with keyboard scrolling, inside the same transaction
-- [ ] 3.7 Display the target layout that a layout-changing commit would activate
-- [ ] 3.8 **Milestone:** the chooser is fully navigable from the keyboard with the mouse unplugged
+- [x] 3.1 Create a focused top-level window on the active monitor, destroyed with the transaction
+- [x] 3.2 Render the original preview, the current Windows layout as context, and one row per candidate with source, target and result
+- [x] 3.3 Arrow-key navigation, rendering each candidate from the original selection every time
+- [x] 3.4 Show unchanged-character counts where a candidate converts only part of the selection
+- [x] 3.5 Compact previews with visible truncation, favouring a region containing changed text
+- [x] 3.6 Expand and collapse the selected candidate, with keyboard scrolling, inside the same transaction
+- [x] 3.7 Display the target layout that a layout-changing commit would activate
+- [x] 3.8 **Milestone:** the chooser is fully navigable from the keyboard with the mouse unplugged
 
 ## 4. Commit, cancel and outcomes
 

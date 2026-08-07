@@ -26,6 +26,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 mod error;
+pub mod chooser;
 pub mod clipboard;
 pub mod focus;
 pub mod hotkey;

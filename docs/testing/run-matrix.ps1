@@ -65,6 +65,19 @@ if ($Smoke) {
 
 $ErrorActionPreference = 'Stop'
 
+# Every scenario presses Shift+Pause, so the run silently measures nothing at all if the
+# configured shortcut is something else — which it is the moment the operator rebinds it, or a
+# previous run of the shell checks leaves it rebound. Set it here and restore at the end, so a
+# red matrix means the product and not the machine.
+$cfgFile     = "$env:APPDATA\LexiSwitch\config.toml"
+$cfgOriginal = Join-Path ([System.IO.Path]::GetTempPath()) 'lexi-config-matrix-backup.toml'
+if (Test-Path $cfgFile) { Copy-Item $cfgFile $cfgOriginal -Force }
+if (-not (Test-Path (Split-Path $cfgFile -Parent))) {
+    New-Item -ItemType Directory (Split-Path $cfgFile -Parent) | Out-Null
+}
+Set-Content -Path $cfgFile -Value "[logging]`nenabled = true`n`n[general]`nenabled = true`n`n[hotkeys]`nconvert_selection = `"Shift+Pause`"`n" -NoNewline
+Write-Host "configuration set for the run; yours is at $cfgOriginal"
+
 Add-Type -Namespace LX -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);
@@ -444,6 +457,8 @@ foreach ($r in $results) {
         $(if ($r.Pass) { 'PASS' } else { '**FAIL**' }))
 }
 $notes = $results | Where-Object { $_.Note } | ForEach-Object { "- {0} / {1}: {2}" -f $_.Application, $_.Actions, $_.Note }
+
+if (Test-Path $cfgOriginal) { Copy-Item $cfgOriginal $cfgFile -Force; Write-Host 'your configuration restored' }
 
 $out = ($lines -join "`n")
 if ($notes) { $out += "`n`nNotes:`n" + ($notes -join "`n") }

@@ -565,3 +565,30 @@ before this task is called passed or failed — it cannot be settled by measurin
 non-loopback address, and no UDP endpoint, across the whole hour including the conversions.
 This is the runtime observation task 6.4 asks for, and it agrees with the import-table evidence
 already recorded above — the binary links no networking library at all.
+
+---
+
+## Layout handles are not 32-bit (2026-08-07)
+
+`Ctrl+Enter` converted the text but never changed the input language, and only for Ukrainian.
+Measured with `cargo run -p lexiswitch-win --example probe_langswitch -- <layout>`, which asks
+for a named layout and then reads back what the foreground window's language actually is:
+
+| layout | HKL as reported | switch honoured |
+|---|---|---|
+| `en-US` | `0x00000000_04090409` | yes, within 100 ms |
+| `de-DE` | `0x00000000_04070407` | yes, within 100 ms |
+| `uk-UA` | `0xFFFFFFFF_F0A80422` | **no, ignored entirely** |
+
+A layout that is not the default for its language gets a handle whose high word is a device
+identifier rather than a language id, and on 64-bit those come back **sign-extended**. The code
+stored `HKL` as a `u32`, so Ukrainian's handle was truncated to `0xF0A80422` and widened again
+to `0x00000000_F0A80422` — a handle naming no installed layout. `WM_INPUTLANGCHANGEREQUEST`
+then failed in the one way that looks identical to an application declining it: silently, with
+no error at any layer.
+
+The two layouts whose handles happen to have bit 31 clear survived the round trip and worked,
+which is what made this present as "layout switching does not work" rather than "one layout
+does not work". A probe that tested only the convenient handle would have reported success.
+
+**Do not narrow an `HKL` to 32 bits.** It is a handle, and handles are pointer-width.

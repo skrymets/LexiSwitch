@@ -43,8 +43,15 @@ const VK_SPACE: u32 = 0x20;
 /// A layout Windows has installed, with its derived table.
 #[derive(Debug, Clone)]
 pub struct InstalledLayout {
-    /// Raw HKL value, as reported.
-    pub hkl: u32,
+    /// Raw HKL value, as reported, at its full width.
+    ///
+    /// Deliberately not a `u32`. A layout that is not the default for its language gets a
+    /// handle whose high word is a device identifier rather than a language id, and on 64-bit
+    /// those come back sign-extended — Ukrainian reports `0xFFFFFFFF_F0A80422` here. Narrowing
+    /// to 32 bits and widening again produced `0x00000000_F0A80422`, a handle naming no
+    /// installed layout, so every request to activate it was silently ignored while the tidy
+    /// handles of en-US and de-DE kept working.
+    pub hkl: usize,
     /// Language identifier — the *low word* of the HKL.
     pub langid: u16,
     /// BCP-47 name, such as `de-DE`.
@@ -167,8 +174,8 @@ fn installed_hkls() -> Result<Vec<HKL>, LayoutError> {
     }
 }
 
-fn hkl_raw(hkl: HKL) -> u32 {
-    hkl.0 as usize as u32
+fn hkl_raw(hkl: HKL) -> usize {
+    hkl.0 as usize
 }
 
 fn locale_name(langid: u16) -> String {

@@ -33,7 +33,7 @@ pub enum Job {
         /// Layout name to raw HKL, so an apply-and-switch can name a layout to Windows rather
         /// than only to the user. Carried rather than looked up here because resolving it
         /// needs the installed set, which lives on the message-loop thread.
-        handles: Vec<(String, u32)>,
+        handles: Vec<(String, usize)>,
         /// The layout active in the focused window, as a weak tiebreak on the *target* only.
         /// It is never allowed to choose a source.
         active: Option<String>,
@@ -199,7 +199,7 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
 /// Kept apart from the message handling because the outcomes are the point: the spec requires
 /// success, a side effect, a failed replacement and an unconfirmed layout switch to be four
 /// visibly different things, and none of them may be reported as another.
-fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<u32>) -> Outcome {
+fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<usize>) -> Outcome {
     let label = format!("{} to {}", candidate.from, candidate.to);
 
     let committed = match transaction.commit(&candidate.text) {

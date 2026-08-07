@@ -36,6 +36,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 const SOURCE: &str = "Еуче шт Утпдшір — і це досить довгий рядок, щоб рядок довелося скоротити";
 
 const VK_RETURN: u16 = 0x0D;
+const VK_CONTROL: u16 = 0x11;
 const VK_SPACE: u16 = 0x20;
 const VK_HOME: u16 = 0x24;
 const VK_DOWN: u16 = 0x28;
@@ -105,8 +106,26 @@ fn main() {
     if !manual {
         // The window has to exist before keys mean anything, and it is opened on this thread —
         // so the script runs on another one.
-        thread::spawn(|| {
+        let switching = std::env::args().any(|a| a == "--switch");
+        thread::spawn(move || {
             thread::sleep(Duration::from_millis(1400));
+            if switching {
+                // Ctrl+Enter is apply-and-switch. Sent as a real chord — the modifier has to be
+                // down when the Enter arrives, which is exactly what the chooser reads.
+                say!("  sending Ctrl+Enter    (apply and switch)");
+                let inputs = [
+                    key(VK_CONTROL, false),
+                    key(VK_RETURN, false),
+                    key(VK_RETURN, true),
+                    key(VK_CONTROL, true),
+                ];
+                // SAFETY: a live slice of fully-initialised INPUT structures with the element
+                // size the API requires.
+                unsafe {
+                    SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+                }
+                return;
+            }
             say!("  sending Down          (move to candidate 1)");
             press(VK_DOWN);
             say!("  sending Space         (expand)");
@@ -129,7 +148,11 @@ fn main() {
             say!();
             say!("  decision: {decision:?}");
             if !manual {
-                let expected = Decision::Apply { index: 0 };
+                let expected = if std::env::args().any(|a| a == "--switch") {
+                    Decision::ApplyAndSwitch { index: 0 }
+                } else {
+                    Decision::Apply { index: 0 }
+                };
                 if decision == expected {
                     say!("  PASS  navigation, expansion and commit all behaved");
                 } else {

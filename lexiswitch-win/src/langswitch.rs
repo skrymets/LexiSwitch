@@ -23,7 +23,12 @@ use crate::WinError;
 /// The request is advisory. An application may decline, and there is no reliable way to
 /// learn that it did, so the caller should not treat success here as proof the layout
 /// changed.
-pub fn activate_for_foreground(hkl_raw: u32) -> Result<(), WinError> {
+///
+/// `hkl_raw` must be the handle at its full width. Truncating it to 32 bits loses the
+/// sign extension on handles whose high word is a device identifier, and the request is then
+/// made for a layout that does not exist — which fails exactly as being declined does, with
+/// no error anywhere.
+pub fn activate_for_foreground(hkl_raw: usize) -> Result<(), WinError> {
     // SAFETY: a null foreground window is possible and PostMessageW rejects it, which is
     // reported rather than ignored. The HKL is reconstructed from a value obtained from
     // GetKeyboardLayoutList, so it names a layout this session knows about; handles are
@@ -33,7 +38,7 @@ pub fn activate_for_foreground(hkl_raw: u32) -> Result<(), WinError> {
         if hwnd.is_invalid() {
             return Err(WinError::last("GetForegroundWindow"));
         }
-        let hkl = HKL(hkl_raw as usize as *mut c_void);
+        let hkl = HKL(hkl_raw as *mut c_void);
         PostMessageW(
             Some(hwnd),
             WM_INPUTLANGCHANGEREQUEST,

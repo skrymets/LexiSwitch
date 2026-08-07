@@ -1029,3 +1029,33 @@ promoted; it now discards the counts first so `Home` means the same thing every 
 - **Rendering is unverified by machine.** The group boundaries, the dimming of rows and toggles,
   the expanded view and the footer are visual claims. They are in `docs/testing/manual-checklist.md`
   for eyes rather than asserted here.
+
+## Both default shortcuts become Win+<modifier>+Pause (2026-08-08)
+
+`convert_selection` moves from `Shift+Pause` to `Win+Shift+Pause`; `change_case` stays at
+`Win+Ctrl+Pause`. The pair is now one gesture with one finger moved rather than two unrelated
+combinations, and both sit clear of application bindings.
+
+`Win+Shift+Pause` was proven registrable with `probe_hold_hotkey` before anything was changed,
+the same way `Win+Ctrl+Pause` was. Windows reserves Win-key combinations in principle and
+`Win+Pause` opens System properties, so neither default can be assumed.
+
+**The interesting consequence is that the hotkey now holds Win.** `release_held_modifiers`
+already covered `VK_LWIN`/`VK_RWIN`, so nothing needed changing — but the harnesses did. Both
+now press the full combination and keep *both* modifiers down past the Pause release, which is
+the condition that function exists for. A leak would deliver `Win+Ctrl+C` instead of `Ctrl+C`,
+and `Win+C` is a shell binding.
+
+That makes the matrix a stronger test than it was: it previously held only Shift.
+
+Verified with both defaults in force: **47/47 shell checks**, **24/24 matrix**, 175 unit tests,
+clippy and the release build clean. Notepad++ passes, which is the application where a held
+modifier once emptied the document rather than copying from it.
+
+**A note on the operator's own configuration.** It already read `Shift+Win+Pause`, chosen by
+hand some time ago — the same combination as the new default, written in the other order.
+`same_binding` compares component by component precisely so that these are recognised as one
+thing; nothing had to change for that file to keep working.
+
+**Not re-run:** `docs/testing/matrix-results.md` now holds this run, replacing one that
+predated the case work and carried a stale Chrome failure.

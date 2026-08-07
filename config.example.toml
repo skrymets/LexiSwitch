@@ -21,14 +21,15 @@ enabled = true
 [hotkeys]
 # Bindings are "Modifier+Modifier+Key". Recognised modifiers: Ctrl, Alt, Shift, Win.
 #
-# Pause is the default because Windows leaves it unbound and almost nothing claims it.
-# Keyboards without a Pause key need this rebound. If another application already holds the
-# combination, startup fails loudly and says which one — it does not silently continue with
-# a hotkey that will never fire.
+# Both defaults are Win+<modifier>+Pause, so the pair is one gesture with one finger moved.
+# Pause is nearly unbound on Windows and almost nothing claims it; Win keeps the combinations
+# clear of application bindings. Keyboards without a Pause key need both rebound. If another
+# application already holds one, LexiSwitch says which — and the other one still works, because
+# each binding is registered on its own.
 #
 # Select text, then press this. Nothing happens to text you have not selected, and nothing
 # happens until you press it.
-convert_selection = "Shift+Pause"
+convert_selection = "Win+Shift+Pause"
 
 # Select text, then press this to change its case — UPPERCASE, snake_case, and so on — with
 # optional stripping of punctuation, digits and whitespace.

@@ -12,7 +12,7 @@ fn example() -> String {
 #[test]
 fn the_shipped_example_parses() {
     let config = Config::parse(&example()).expect("example config must be valid");
-    assert_eq!(config.hotkeys.convert_selection, "Shift+Pause");
+    assert_eq!(config.hotkeys.convert_selection, "Win+Shift+Pause");
 }
 
 #[test]
@@ -35,7 +35,10 @@ fn an_empty_file_yields_the_defaults() {
 #[test]
 fn every_default_value_is_what_the_design_specifies() {
     let c = Config::default();
-    assert_eq!(c.hotkeys.convert_selection, "Shift+Pause");
+    // Both defaults share the Win+…+Pause shape deliberately: one gesture, one finger
+    // moved. They are asserted together so neither can drift from the other.
+    assert_eq!(c.hotkeys.convert_selection, "Win+Shift+Pause");
+    assert_eq!(c.hotkeys.change_case, "Win+Ctrl+Pause");
     assert!(c.selection.allow_clipboard_fallback);
     assert!(!c.logging.enabled, "logging is off unless asked for");
     assert!(c.layouts.candidates.is_empty());
@@ -48,7 +51,7 @@ enabled = true
 ").unwrap();
     assert!(config.logging.enabled);
     // Untouched sections still carry their defaults.
-    assert_eq!(config.hotkeys.convert_selection, "Shift+Pause");
+    assert_eq!(config.hotkeys.convert_selection, "Win+Shift+Pause");
     assert!(config.selection.allow_clipboard_fallback);
 }
 

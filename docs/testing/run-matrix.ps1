@@ -65,7 +65,7 @@ if ($Smoke) {
 
 $ErrorActionPreference = 'Stop'
 
-# Every scenario presses Shift+Pause, so the run silently measures nothing at all if the
+# Every scenario presses Win+Shift+Pause, so the run silently measures nothing at all if the
 # configured shortcut is something else — which it is the moment the operator rebinds it, or a
 # previous run of the shell checks leaves it rebound. Set it here and restore at the end, so a
 # red matrix means the product and not the machine.
@@ -75,7 +75,7 @@ if (Test-Path $cfgFile) { Copy-Item $cfgFile $cfgOriginal -Force }
 if (-not (Test-Path (Split-Path $cfgFile -Parent))) {
     New-Item -ItemType Directory (Split-Path $cfgFile -Parent) | Out-Null
 }
-Set-Content -Path $cfgFile -Value "[logging]`nenabled = true`n`n[general]`nenabled = true`n`n[hotkeys]`nconvert_selection = `"Shift+Pause`"`n" -NoNewline
+Set-Content -Path $cfgFile -Value "[logging]`nenabled = true`n`n[general]`nenabled = true`n`n[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n" -NoNewline
 Write-Host "configuration set for the run; yours is at $cfgOriginal"
 
 Add-Type -Namespace LX -Name W -MemberDefinition @'
@@ -331,12 +331,12 @@ function Run-Case([string]$app, [string]$scenario) {
     }
     $expectedLayout = if ($scenario -eq 'ApplyAndSwitch') { 'uk-UA' } else { 'en-US' }
     $actions = switch ($scenario) {
-        'Apply'          { 'select all, Shift+Pause, Enter' }
-        'ApplyAndSwitch' { 'select all, Shift+Pause, Ctrl+Enter' }
-        'Cancel'         { 'select all, Shift+Pause, Esc' }
-        'NoConversion'   { 'select all, Shift+Pause, Esc' }
-        'FailedReplacement' { 'select all in a read-only field, Shift+Pause, Enter' }
-        'NothingSelected'   { 'deselect, Shift+Pause' }
+        'Apply'          { 'select all, Win+Shift+Pause, Enter' }
+        'ApplyAndSwitch' { 'select all, Win+Shift+Pause, Ctrl+Enter' }
+        'Cancel'         { 'select all, Win+Shift+Pause, Esc' }
+        'NoConversion'   { 'select all, Win+Shift+Pause, Esc' }
+        'FailedReplacement' { 'select all in a read-only field, Win+Shift+Pause, Enter' }
+        'NothingSelected'   { 'deselect, Win+Shift+Pause' }
     }
 
     $row = [ordered]@{
@@ -393,7 +393,10 @@ function Run-Case([string]$app, [string]$scenario) {
     Set-Clipboard -Value 'PRIOR-CLIPBOARD'
     Start-Sleep -Milliseconds 250
 
-    # The hotkey, with Shift held as a hand holds it.
+    # The hotkey, with both modifiers still held after the Pause as a hand holds them. That
+    # delay is the point: it is the condition release_held_modifiers exists for, and Win is
+    # now part of it, so a chord that leaked would arrive as Win+Ctrl+C rather than Ctrl+C.
+    [LX.W]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero)
     [LX.W]::keybd_event(0x10, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 60
     [LX.W]::keybd_event(0x13, 0, 0, [UIntPtr]::Zero)
@@ -401,6 +404,7 @@ function Run-Case([string]$app, [string]$scenario) {
     [LX.W]::keybd_event(0x13, 0, 2, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 450
     [LX.W]::keybd_event(0x10, 0, 2, [UIntPtr]::Zero)
+    [LX.W]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
     Start-Sleep -Seconds 3
 
     $chooserUp = ([LX.W]::GetForegroundWindow() -ne $h)

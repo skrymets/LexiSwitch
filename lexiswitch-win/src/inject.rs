@@ -104,8 +104,9 @@ const MODIFIER_SETTLE: std::time::Duration = std::time::Duration::from_millis(30
 
 /// Release any modifier the user is still physically holding.
 ///
-/// The hotkey is a chord — `Shift+Pause` by default. `RegisterHotKey` consumes the `Pause`, but
-/// nothing releases the `Shift`, and the user's hand is still on it when the conversion starts.
+/// The hotkey is a chord — `Win+Shift+Pause` and `Win+Ctrl+Pause` by default. `RegisterHotKey`
+/// consumes the `Pause`, but nothing releases the modifiers, and the user's hand is still on
+/// them when the transaction starts.
 /// Every chord synthesised from here then arrives at the target with that modifier added:
 /// `Ctrl+C` is delivered as `Ctrl+Shift+C`.
 ///

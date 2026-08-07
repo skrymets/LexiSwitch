@@ -52,13 +52,13 @@ $cfg    = "$env:APPDATA\LexiSwitch\config.toml"
 $state  = "$env:APPDATA\LexiSwitch\state.toml"
 
 # The suite assumes the configured shortcut is the default one: the conflict, recovery and
-# gating groups all hold or press Shift+Pause. Nothing used to enforce that, so a config left
+# gating groups all hold or press Win+Shift+Pause. Nothing used to enforce that, so a config left
 # rebound by a previous run — or by the operator using the product — made three groups fail for
 # a reason that had nothing to do with the code. Set it once here, restore it at the end.
 $cfgOriginal = Join-Path $tmp 'lexi-config-suite-backup.toml'
 if (Test-Path $cfg) { Copy-Item $cfg $cfgOriginal -Force }
 if (-not (Test-Path (Split-Path $cfg -Parent))) { New-Item -ItemType Directory (Split-Path $cfg -Parent) | Out-Null }
-Set-Content -Path $cfg -Value "[logging]`nenabled = true`n`n[general]`nenabled = true`n`n[hotkeys]`nconvert_selection = `"Shift+Pause`"`n" -NoNewline
+Set-Content -Path $cfg -Value "[logging]`nenabled = true`n`n[general]`nenabled = true`n`n[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n" -NoNewline
 "configuration set for the run; yours is at $cfgOriginal"
 
 $results = New-Object System.Collections.ArrayList
@@ -74,6 +74,14 @@ function Chord([byte]$vk, [int]$ms = 500) {
 function Key([byte]$vk, [int]$ms = 400) {
     [SH.W]::keybd_event($vk,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event($vk,0,2,[UIntPtr]::Zero)
     Start-Sleep -Milliseconds $ms }
+function InvokeConvert {
+    # The conversion shortcut, Win+Shift+Pause, pressed as a hand presses it: the modifiers
+    # stay down past the Pause, which is the condition release_held_modifiers exists for.
+    [SH.W]::keybd_event(0x5B,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 60
+    [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 250
+    [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x5B,0,2,[UIntPtr]::Zero) }
 function WaitForeground([IntPtr]$h, [int]$ms = 3000) {
     # Existing is not the same as focused. A window is created, then shown, then asks for the
     # foreground with retries — so it is findable by EnumWindows for up to half a second before
@@ -136,7 +144,7 @@ if ($Only -contains 'Conflict') {
     '--- shortcut conflict with another application ---'
     StopAll
     $out = Join-Path $tmp 'lexi-holder.out'
-    Start-Process $holder -ArgumentList 'Shift+Pause','90' -WindowStyle Hidden -RedirectStandardOutput $out | Out-Null
+    Start-Process $holder -ArgumentList 'Win+Shift+Pause','90' -WindowStyle Hidden -RedirectStandardOutput $out | Out-Null
     Start-Sleep -Seconds 3
     Check 'the stand-in holds the combination' (((Get-Content $out -ErrorAction SilentlyContinue) -join '') -like '*HOLDING*')
 
@@ -156,7 +164,7 @@ if ($Only -contains 'Recorder') {
     if (Test-Path $cfg) { Copy-Item $cfg $back -Force }
     try {
         StopAll
-        Start-Process $holder -ArgumentList 'Shift+Pause','90' -WindowStyle Hidden | Out-Null
+        Start-Process $holder -ArgumentList 'Win+Shift+Pause','90' -WindowStyle Hidden | Out-Null
         Start-Sleep -Seconds 3
         $log = Join-Path $tmp 'lexi-recorder.log'
         $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
@@ -197,7 +205,7 @@ if ($Only -contains 'Recorder') {
 if ($Only -contains 'Recovery') {
     '--- the conflict clears when the combination is released ---'
     StopAll
-    $h = Start-Process $holder -ArgumentList 'Shift+Pause','20' -PassThru -WindowStyle Hidden
+    $h = Start-Process $holder -ArgumentList 'Win+Shift+Pause','20' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 3
     $log = Join-Path $tmp 'lexi-recover.log'
     $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
@@ -255,7 +263,7 @@ if ($Only -contains 'Reload') {
     try {
         StopAll
         # A file that parses but fails validation: the binding may not be empty.
-        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
         Start-Sleep -Milliseconds 500
         $log = Join-Path $tmp 'lexi-reload.log'
         $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
@@ -313,8 +321,7 @@ if ($Only -contains 'Gating') {
         Start-Sleep -Seconds 2
         [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 700
         Chord 0x41 400
-        [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
-        [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+        InvokeConvert
         Start-Sleep -Seconds 3
         $before = ((Get-Content $log -ErrorAction SilentlyContinue) | Where-Object { $_ -like 'selection_requested*' }).Count
         Check 'the hotkey does nothing while disabled' ($before -eq 0)
@@ -323,8 +330,7 @@ if ($Only -contains 'Gating') {
         Start-Sleep -Seconds 2
         [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 700
         Chord 0x41 400
-        [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
-        [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+        InvokeConvert
         Start-Sleep -Seconds 3
         $after = ((Get-Content $log -ErrorAction SilentlyContinue) | Where-Object { $_ -like 'selection_requested*' }).Count
         Check 'and converts again once enabled' ($after -gt 0)
@@ -352,8 +358,7 @@ if ($Only -contains 'Focus') {
             if ($route.tray) {
                 [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]104, [IntPtr]::Zero)
             } else {
-                [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
-                [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+                InvokeConvert
             }
             Start-Sleep -Seconds 3
             Key 0x0D 1000     # apply
@@ -405,7 +410,7 @@ if ($Only -contains 'Case') {
     try {
         StopAll
         Remove-Item $state -ErrorAction SilentlyContinue     # start with no memory at all
-        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
         Start-Sleep -Milliseconds 500
 
         $log = Join-Path $tmp 'lexi-case.log'

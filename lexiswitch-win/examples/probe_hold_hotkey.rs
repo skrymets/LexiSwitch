@@ -5,7 +5,7 @@
 //! describes a combination held by a *different* application, so this is what should have been
 //! holding it all along.
 //!
-//!   cargo run -p lexiswitch-win --example probe_hold_hotkey                 -- Shift+Pause
+//!   cargo run -p lexiswitch-win --example probe_hold_hotkey             -- Win+Shift+Pause
 //!   cargo run -p lexiswitch-win --example probe_hold_hotkey -- "Ctrl+Alt+K" 30
 //!
 //! Registers the combination, prints whether it got it, and holds it until killed or until the
@@ -27,7 +27,7 @@ use lexiswitch_win::window::MessageWindow;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let binding_text = args.next().unwrap_or_else(|| "Shift+Pause".to_string());
+    let binding_text = args.next().unwrap_or_else(|| "Win+Shift+Pause".to_string());
     let seconds: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(600);
 
     let binding = match parse_binding(&binding_text) {

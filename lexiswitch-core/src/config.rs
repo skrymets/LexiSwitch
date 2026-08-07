@@ -129,9 +129,10 @@ impl Default for Chooser {
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            convert_selection: "Shift+Pause".into(),
-            // Next to the first on the same physical key, so the pair is learned as one
-            // gesture rather than two unrelated combinations.
+            // Both defaults share the Win+…+Pause shape, so the pair is learned as one
+            // gesture with one finger moved rather than as two unrelated combinations. Pause
+            // is nearly unclaimed, and Win keeps them clear of application bindings.
+            convert_selection: "Win+Shift+Pause".into(),
             change_case: "Win+Ctrl+Pause".into(),
             unknown: Unknown::new(),
         }
@@ -190,7 +191,7 @@ impl Config {
                 text,
                 "hotkeys",
                 "convert_selection",
-                "convert_selection cannot be empty; give a binding such as \"Shift+Pause\"",
+                "convert_selection cannot be empty; give a binding such as \"Win+Shift+Pause\"",
             ));
         }
         if self.hotkeys.change_case.trim().is_empty() {

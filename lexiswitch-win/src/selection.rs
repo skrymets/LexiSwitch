@@ -143,13 +143,19 @@ const PASTE_CONSUMED: std::time::Duration = std::time::Duration::from_millis(200
 ///
 /// `previous` is what the clipboard held beforehand — captured by the caller, because the two
 /// read paths learn it at different moments and neither should snapshot our own payload.
+/// Replace the selection with `text`, reporting whether the target was seen to take it.
+///
+/// The bool is **not** proof the document changed — nothing available here is. It is the
+/// weaker claim that the target opened the clipboard after the paste chord, which is a
+/// precondition for pasting: a target that never read the clipboard certainly did not paste
+/// from it. `false` therefore means the replacement can be ruled out, not that it is unknown.
 pub fn paste_over_selection(
     guard: &FocusGuard,
     owner: HWND,
     text: &str,
     attempts: u32,
     previous: Option<String>,
-) -> Result<(), SelectionError> {
+) -> Result<bool, SelectionError> {
     // Never paste nothing. Pasting an empty clipboard over a selection deletes it — the worst
     // outcome a conversion can have, and indistinguishable from the program eating the user's
     // text on purpose. `convert` cannot produce this from non-empty input, so reaching here
@@ -181,7 +187,7 @@ pub fn paste_over_selection(
     // has been delivered, and polling from the instant SendInput returns would see the window
     // between our own write and their read as "nobody wants it".
     std::thread::sleep(PASTE_SETTLE);
-    clipboard::wait_for_consumer(PASTE_CONSUMED);
+    let consumed = clipboard::wait_for_consumer(PASTE_CONSUMED);
 
     // Restore regardless of whether the paste worked — the clipboard must not keep our copy
     // of the user's text either way.
@@ -193,7 +199,8 @@ pub fn paste_over_selection(
     .restore(owner, attempts);
 
     pasted?;
-    restored
+    restored?;
+    Ok(consumed)
 }
 
 /// The result of a clipboard read, carrying what must be put back.

@@ -214,6 +214,18 @@ fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<usiz
         }
     };
 
+    // A replacement that can be ruled out is never reported as success, and never followed by
+    // a layout switch. The target never read the clipboard, so it cannot have pasted from it —
+    // a read-only field is the ordinary way to reach this, and the document is untouched.
+    if !committed.confirmed {
+        return Outcome::Failed {
+            title: "Conversion was not applied".into(),
+            body: "The application did not accept the replacement, so nothing was changed. \
+                   This usually means the text cannot be edited there."
+                .into(),
+        };
+    }
+
     // Only after the replacement landed. Switching the layout of a conversion that failed
     // would leave the user typing in a language they did not ask for, on text that never
     // changed.

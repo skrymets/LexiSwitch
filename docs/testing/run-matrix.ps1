@@ -31,8 +31,9 @@ param(
     [ValidateSet('Notepad', 'Notepad++', 'Chrome', 'Edge')]
     [string[]] $Apps = @('Notepad', 'Notepad++', 'Chrome', 'Edge'),
 
-    [ValidateSet('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion')]
-    [string[]] $Scenarios = @('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion'),
+    [ValidateSet('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion', 'FailedReplacement')]
+    [string[]] $Scenarios = @('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion',
+                              'FailedReplacement'),
 
     [string] $OutFile
 )
@@ -83,6 +84,7 @@ $SRC      = '{jxe ltoj d nt,t pfgbnfnb/ Jn lbdbcm db phj,bkb gtdye hj,jne///'
 $EXPECTED = 'Хочу дещо в тебе запитати. От дивись ви зробили певну роботу...'
 $INERT    = '1234567890'          # digits sit on the same positions in all three layouts
 $PAGE     = Join-Path $PSScriptRoot 'matrix.html'
+$PAGE_RO  = Join-Path $PSScriptRoot 'matrix-readonly.html'
 
 function Key([byte]$vk, [int]$ms = 350) {
     [LX.W]::keybd_event($vk, 0, 0, [UIntPtr]::Zero)
@@ -143,7 +145,7 @@ function Read-Field {
 
 # --- targets ---------------------------------------------------------------------------
 
-function Open-Target([string]$app) {
+function Open-Target([string]$app, [string]$page = $PAGE) {
     switch ($app) {
         'Notepad' {
             $p = Get-Process Notepad -ErrorAction SilentlyContinue |
@@ -168,7 +170,7 @@ function Open-Target([string]$app) {
             if (-not (Test-Path $exe)) { return $null }
             Close-AllTargets          # never inherit a window from the previous case
             Start-Process $exe -ArgumentList '--new-window', '--no-first-run',
-                '--no-default-browser-check', ('file:///' + ($PAGE -replace '\\','/'))
+                '--no-default-browser-check', ('file:///' + ($page -replace '\\','/'))
             # Poll for the window rather than guessing: a cold browser start is slow and a
             # fixed sleep would either waste time or type into nothing.
             $h = [IntPtr]::Zero
@@ -237,12 +239,15 @@ function Close-Target([string]$app) {
 # --- one row -----------------------------------------------------------------------------
 
 function Run-Case([string]$app, [string]$scenario) {
+    $readOnly = ($scenario -eq 'FailedReplacement')
     $text     = if ($scenario -eq 'NoConversion') { $INERT } else { $SRC }
     $expected = switch ($scenario) {
         'Apply'          { $EXPECTED }
         'ApplyAndSwitch' { $EXPECTED }
         'Cancel'         { $SRC }
         'NoConversion'   { $INERT }
+        # The replacement cannot land, so the text must be exactly as it started.
+        'FailedReplacement' { $SRC }
     }
     $expectedLayout = if ($scenario -eq 'ApplyAndSwitch') { 'uk-UA' } else { 'en-US' }
     $actions = switch ($scenario) {
@@ -250,6 +255,7 @@ function Run-Case([string]$app, [string]$scenario) {
         'ApplyAndSwitch' { 'select all, Shift+Pause, Ctrl+Enter' }
         'Cancel'         { 'select all, Shift+Pause, Esc' }
         'NoConversion'   { 'select all, Shift+Pause, Esc' }
+        'FailedReplacement' { 'select all in a read-only field, Shift+Pause, Enter' }
     }
 
     $row = [ordered]@{
@@ -258,16 +264,25 @@ function Run-Case([string]$app, [string]$scenario) {
         ExpectedLayout = $expectedLayout; ActualLayout = ''; Pass = $false; Note = ''
     }
 
-    $h = Open-Target $app
+    if ($readOnly -and $app -notin 'Chrome', 'Edge') {
+        $row.Note = 'not applicable: needs a read-only field'
+        $row.ExpectedText = 'n/a'; $row.ActualText = 'n/a'
+        $row.ExpectedLayout = 'n/a'; $row.ActualLayout = 'n/a'; $row.Pass = $true
+        return [pscustomobject]$row
+    }
+    $h = Open-Target $app $(if ($readOnly) { $PAGE_RO } else { $PAGE })
     if (-not $h) { $row.Note = 'target unavailable'; return [pscustomobject]$row }
 
     if (-not (Set-Layout 'en-US')) { $row.Note = 'could not set en-US'; return [pscustomobject]$row }
 
-    # Seed the field and select it.
+    # Seed the field and select it. The read-only page carries its text in the markup,
+    # because there is no way to put it there from the keyboard.
     Chord 0x41 300
-    Set-Clipboard -Value $text
-    Start-Sleep -Milliseconds 250
-    Chord 0x56 700          # Ctrl+V
+    if (-not $readOnly) {
+        Set-Clipboard -Value $text
+        Start-Sleep -Milliseconds 250
+        Chord 0x56 700      # Ctrl+V
+    }
     Chord 0x41 500          # Ctrl+A
     $seeded = Read-Field
     if ($seeded -ne $text) {
@@ -294,9 +309,10 @@ function Run-Case([string]$app, [string]$scenario) {
     if (-not $chooserUp) { $row.Note = 'no chooser appeared' }
 
     switch ($scenario) {
-        'Apply'          { Key 0x0D 800 }
-        'ApplyAndSwitch' { Chord 0x0D 800 }
-        default          { Key 0x1B 800 }
+        'Apply'             { Key 0x0D 800 }
+        'ApplyAndSwitch'    { Chord 0x0D 800 }
+        'FailedReplacement' { Key 0x0D 800 }
+        default             { Key 0x1B 800 }
     }
     # Long enough to outlast the product's own worst case. The replacement waits up to two
     # seconds for the target to take the clipboard before restoring it, so a harness that looks

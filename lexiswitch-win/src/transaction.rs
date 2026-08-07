@@ -198,11 +198,12 @@ impl Transaction {
         if pasted.is_err() {
             let _ = self.put_clipboard_back();
         }
-        pasted?;
+        let confirmed = pasted?;
 
         Ok(Committed {
             via: self.via,
             lost_nontext,
+            confirmed,
         })
     }
 
@@ -238,4 +239,11 @@ pub struct Committed {
     pub via: ReadVia,
     /// True when the clipboard held something other than text, which the round trip destroyed.
     pub lost_nontext: bool,
+    /// Whether the target was seen to take the clipboard after the paste.
+    ///
+    /// False rules the replacement *out*: pasting requires reading the clipboard, so a target
+    /// that never opened it did not paste. True does not rule it in — it means only that the
+    /// precondition held. Reporting success on `false` is what the spec forbids, and what a
+    /// read-only field in the compatibility matrix caught the system doing.
+    pub confirmed: bool,
 }

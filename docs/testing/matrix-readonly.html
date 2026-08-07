@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>LexiSwitch matrix target (read-only)</title>
+<!--
+  A read-only field, for the case where the replacement cannot land.
+
+  The selection is still readable and still copyable, so the transaction gets as far as offering
+  candidates and committing one - and then the paste does nothing at all. That is the shape of a
+  failed replacement the spec cares about: the system must not report success, and whatever it
+  disturbed on the way must be put back.
+-->
+<style>
+  body { font: 16px/1.4 "Segoe UI", sans-serif; margin: 2rem; background: #f7f7f7; }
+  textarea { width: 100%; height: 40vh; font: 18px/1.5 Consolas, monospace; padding: .75rem;
+             background: #eee; }
+  p { color: #555; }
+</style>
+<h1>LexiSwitch matrix target (read-only)</h1>
+<p>This field is <code>readonly</code>: it can be selected and copied from, but not written to.</p>
+<textarea id="field" autofocus spellcheck="false" readonly>{jxe ltoj d nt,t pfgbnfnb/ Jn lbdbcm db phj,bkb gtdye hj,jne///</textarea>

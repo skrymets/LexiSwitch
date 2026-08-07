@@ -676,3 +676,38 @@ the question the individual probes could not — what is the state of the whole 
 product: a hardcoded Ukrainian layout handle with the wrong constant, and a window search that
 matched an Edge window when Chrome was asked for. A third was the harness checking the clipboard
 sooner than the product's own worst-case restore. A red cell is a question, not a verdict.
+
+---
+
+## What "the replacement failed" can and cannot be detected from (2026-08-07)
+
+A read-only field in the compatibility matrix caught the system reporting `outcome_applied` for
+a conversion that changed nothing. `SendInput` reports keystrokes *enqueued*, never applied
+(ADR-0010), so nothing in the paste path knows whether the target acted on it.
+
+The clipboard offers a partial answer. Pasting requires reading the clipboard, so a target that
+never opened it cannot have pasted from it. That signal is sound here — measured with
+`probe_clipboard_consumer`, which writes the clipboard and sends no paste at all:
+
+| clipboard written | consumer seen within 2 s |
+|---|---|
+| plain text | no |
+| with the history-exclusion formats set | no |
+
+So nothing on this machine reads the clipboard opportunistically, and a consumer observed after
+a paste chord really is the target. Clipboard History, cloud clipboard and third-party managers
+would each have made this useless; none of them fired.
+
+**It is still not sufficient.** Chrome opens the clipboard while processing `Ctrl+V` and *then*
+discovers the field is read-only, so the consumer appears and the document does not change. The
+signal rules out "the target never processed the paste"; it cannot rule out "the target
+processed it and declined".
+
+**Implemented**: a replacement whose clipboard was never taken is reported as
+"Conversion was not applied" rather than as success, and no layout switch follows it.
+
+**Not implemented**: detecting a paste that was read and refused. That needs a verification read
+of the target after the commit — feasible where UI Automation exposes the focused element's
+text, unavailable elsewhere, and carrying its own risk of reporting a false failure when an
+application legitimately transforms what was pasted. Recorded rather than attempted, because a
+false "not applied" on a conversion that worked is worse than the case it would fix.

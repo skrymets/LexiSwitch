@@ -185,19 +185,21 @@ pub fn paste_over_selection(
 
     let pasted = inject::paste(guard).map_err(SelectionError::Inject);
 
-    // Watch for the target taking the clipboard, from the instant the chord goes out.
+    // Settle first, then wait for the target to take the clipboard.
     //
-    // Not after a delay. Our own handle is already closed — the write above is scoped — so
-    // there is nothing of ours to mistake for a consumer, and a target that reads quickly does
-    // so well inside a fixed settle. Sleeping first and polling afterwards misses those
-    // entirely: it reported Notepad, which reads almost immediately, as never having taken the
-    // clipboard at all.
+    // The order is load-bearing and was established by measurement in both directions.
     //
-    // The wait matters because a browser reads much later than a native edit control. Chrome
-    // read after the restore below and pasted the *previous* clipboard contents into the
-    // document (`docs/testing/run-matrix.ps1` covers exactly this).
-    let consumed = clipboard::wait_for_consumer(PASTE_CONSUMED);
+    // Waiting *before* the settle catches the wrong open. Chrome watches the clipboard for
+    // changes, so it opens it the moment anything is written — including this write. The wait
+    // then returns on that observation, the restore below runs, and the real paste reads the
+    // restored contents: the field ends up holding the user's previous clipboard instead of
+    // the conversion. Measured, both times it was tried.
+    //
+    // Settling first skips past that observation so the wait sees the paste's own read. The
+    // cost is that a target reading inside the settle is missed entirely, which is why
+    // `consumed` is reported for diagnostics and never used to decide anything.
     std::thread::sleep(PASTE_SETTLE);
+    let consumed = clipboard::wait_for_consumer(PASTE_CONSUMED);
 
     // Restore regardless of whether the paste worked — the clipboard must not keep our copy
     // of the user's text either way.

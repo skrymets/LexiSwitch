@@ -722,3 +722,27 @@ whole line the caret is on.
 Left as it is. The behaviour belongs to the editor's copy command, the chooser shows exactly
 what would be replaced before anything happens, and suppressing it would mean second-guessing
 what the user's own editor decided a copy means.
+
+---
+
+## The paste settle must come before the clipboard wait (2026-08-07)
+
+The replacement puts text on the clipboard, sends `Ctrl+V`, waits for the target to take it, and
+then restores what was there before. The order of the settle and the wait was got wrong in both
+directions before it was got right, and each mistake produced a different failure:
+
+| order | what breaks |
+|---|---|
+| settle, then wait | a target reading inside the settle is never observed — used as evidence, this reported a *working* Notepad conversion as "not applied" |
+| wait, then settle | Chrome watches the clipboard and opens it the instant anything is written, so the wait returns on that observation, the restore runs, and the paste reads the restored value — the field ends up holding the user's previous clipboard |
+
+Both were measured, the second twice: it was introduced to fix the first, and put `PRIOR-CLIPBOARD`
+into the Chrome row of the matrix within one run.
+
+**Settle first.** It skips past the change-observation so the wait sees the paste's own read. The
+cost is the first row of the table, which is why the "was it consumed" flag is reported for
+diagnostics and never used to decide anything.
+
+The wider lesson is in the second row: a clipboard *open* is not a paste. Chrome opens the
+clipboard when it changes, when it pastes, and when it declines to paste into a read-only field.
+Nothing about opening it distinguishes those.

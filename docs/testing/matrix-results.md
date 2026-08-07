@@ -1,16 +1,3 @@
-# Compatibility matrix — last run
-
-Produced by `pwsh -File docs/testing/run-matrix.ps1`. Re-run it after any change to the read,
-replace or layout-switch paths; a fix that trades one application for another shows up here and
-nowhere else.
-
-Run 2026-08-07 against the release build at commit `4fb3e75`, with all three layouts installed.
-
-**24 of 24 pass** (two are `n/a`: the read-only field has no equivalent in a native editor).
-
-Windows Terminal is deliberately out of scope, and VS Code is not installed on this machine —
-see task 7.8 of `add-candidate-chooser` for both.
-
 | Application | Initial text | Actions | Layout before | Expected text | Actual text | Expected layout | Actual layout | Pass |
 |---|---|---|---|---|---|---|---|---|
 | Notepad | `{jxe ltoj d nt,t pfgbnfnb/ Jn lbdbcm db phj,b…` | select all, Shift+Pause, Enter | en-US | `Хочу дещо в тебе запитати. От дивись ви зроби…` | `Хочу дещо в тебе запитати. От дивись ви зроби…` | en-US | en-US | PASS |

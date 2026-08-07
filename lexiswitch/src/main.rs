@@ -208,12 +208,23 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
 
+        // Which menu command to act on, if any, from whichever route it arrived by.
+        //
+        // Two routes, one handler. `TrackPopupMenu` returns the chosen id directly, while
+        // `WM_COMMAND` is how a menu selection arrives by every other means — and it is the
+        // only route reachable from outside the process, which is what makes these commands
+        // testable at all. Quit was already handled twice; the rest were handled once, so a
+        // posted Convert selection did nothing and looked exactly like a broken feature.
+        let mut command = None;
+
         match msg.message {
             WM_HOTKEY => {
-                if !state.converts() {
-                    return Flow::Continue;
-                }
-                if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
+                if state.converts()
+                    && matches!(
+                        HotkeyId::from_raw(msg.wParam.0 as i32),
+                        Some(HotkeyId::ConvertSelection)
+                    )
+                {
                     // Every installed layout goes across, not a chosen pair. Which conversions
                     // are plausible is decided from the selected characters; the active layout
                     // travels only as a weak tiebreak on the target, because it is a fact about
@@ -231,63 +242,61 @@ fn run() -> Result<(), Box<dyn Error>> {
                 log.note(&format!("tray_message event=0x{click:04X}"));
                 // WM_CONTEXTMENU as well as WM_RBUTTONUP: which one the shell sends depends on
                 // the notify-icon protocol version, and accepting both costs nothing.
-                if click != WM_RBUTTONUP && click != WM_CONTEXTMENU {
-                    return Flow::Continue;
-                }
-                if let Some(command) = tray.show_menu(&state) {
-                    match command {
-                        MenuCommand::EnableDisable => {
-                            enabled = !enabled;
-                            state = AgentState::resolve(
-                                layout_count,
-                                shortcut.clone(),
-                                enabled,
-                                runtime_error.clone(),
-                            );
-                            tray.set_state(&state);
-                            log.note(if enabled { "enabled" } else { "disabled" });
-                            tray.notify(&state.summary(), &state.explanation());
-                        }
-                        MenuCommand::ConvertSelection => {
-                            // The same job the hotkey sends, and the only way to convert while
-                            // the shortcut is unavailable.
-                            if state.converts() {
-                                request_conversion(&work, &layouts, &config, &mut log);
-                            }
-                        }
-                        MenuCommand::ReloadConfig => match config_path.as_deref() {
-                            Some(path) => match configwatch::load(path) {
-                                Loaded::Ok(new) => {
-                                    config = new;
-                                    log.set_enabled(config.logging.enabled);
-                                    tray.notify("Configuration reloaded", "Settings applied.");
-                                }
-                                Loaded::Missing => tray.notify(
-                                    "No configuration file",
-                                    "Defaults are in effect. Use \"Open configuration file\" to \
-                                     create one.",
-                                ),
-                                Loaded::Invalid(why) => {
-                                    tray.notify("Configuration not applied", &why)
-                                }
-                            },
-                            None => tray.notify(
-                                "No configuration file",
-                                "APPDATA is not set, so there is nowhere to look.",
-                            ),
-                        },
-                        MenuCommand::OpenConfig => open_config(&config_path, &tray),
-                        MenuCommand::Quit => return Flow::Stop,
-                    }
+                if click == WM_RBUTTONUP || click == WM_CONTEXTMENU {
+                    command = tray.show_menu(&state);
                 }
             }
             WM_COMMAND => {
-                if let Some(MenuCommand::Quit) = MenuCommand::from_raw(msg.wParam.0 as u32 & 0xFFFF)
-                {
-                    return Flow::Stop;
-                }
+                command = MenuCommand::from_raw(msg.wParam.0 as u32 & 0xFFFF);
             }
             _ => {}
+        }
+
+        if let Some(command) = command {
+            match command {
+                MenuCommand::EnableDisable => {
+                    enabled = !enabled;
+                    state = AgentState::resolve(
+                        layout_count,
+                        shortcut.clone(),
+                        enabled,
+                        runtime_error.clone(),
+                    );
+                    tray.set_state(&state);
+                    log.note(if enabled { "enabled" } else { "disabled" });
+                    tray.notify(&state.summary(), &state.explanation());
+                }
+                MenuCommand::ConvertSelection => {
+                    // The same job the hotkey sends, and the only way to convert while the
+                    // shortcut is held by another application.
+                    if state.converts() {
+                        request_conversion(&work, &layouts, &config, &mut log);
+                    } else {
+                        tray.notify(&state.summary(), &state.explanation());
+                    }
+                }
+                MenuCommand::ReloadConfig => match config_path.as_deref() {
+                    Some(path) => match configwatch::load(path) {
+                        Loaded::Ok(new) => {
+                            config = new;
+                            log.set_enabled(config.logging.enabled);
+                            tray.notify("Configuration reloaded", "Settings applied.");
+                        }
+                        Loaded::Missing => tray.notify(
+                            "No configuration file",
+                            "Defaults are in effect. Use \"Open configuration file\" to create \
+                             one.",
+                        ),
+                        Loaded::Invalid(why) => tray.notify("Configuration not applied", &why),
+                    },
+                    None => tray.notify(
+                        "No configuration file",
+                        "APPDATA is not set, so there is nowhere to look.",
+                    ),
+                },
+                MenuCommand::OpenConfig => open_config(&config_path, &tray),
+                MenuCommand::Quit => return Flow::Stop,
+            }
         }
         Flow::Continue
     })?;

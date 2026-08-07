@@ -13,6 +13,9 @@
 - [x] 2.1 Model the five states — enabled, disabled, too few layouts, shortcut conflict, runtime error
 - [x] 2.2 Reflect the current state in the icon or tooltip, including the active shortcut where one is registered
 - [x] 2.3 Add the conversion command, working whether or not the global shortcut is registered
+      *Verified against a genuine conflict: a second instance, started while the first held
+      Shift+Pause, converted `Ghbdsn ltoj` to `Привіт дещо` from the tray command. Its log
+      reads `hotkey_conflict` then `selection_requested` then `outcome_applied`.*
 - [ ] 2.4 Add settings and diagnostics entries
 - [ ] 2.5 Confirm by hand that each of the five states is reachable and visibly different from the others
 

@@ -18,18 +18,26 @@ SHALL NOT alter text automatically, on any heuristic, at any confidence level.
 
 ### Requirement: Convert the selection
 
-Pressing the selection hotkey SHALL replace the currently highlighted text with its
-conversion, in place.
+Pressing the invocation hotkey SHALL open a chooser over the currently highlighted text and
+SHALL replace that text only after the user commits a candidate.
+
+The selection SHALL be read while the user's application still has focus, before the chooser
+opens.
 
 #### Scenario: Selected text is converted
 
-- **WHEN** the user selects mistyped text and presses the selection hotkey
-- **THEN** the selection is replaced with the converted text
+- **WHEN** the user selects mistyped text, presses the invocation hotkey, and commits a candidate
+- **THEN** the selection is replaced with that candidate's result
+
+#### Scenario: User invokes and changes their mind
+
+- **WHEN** the user presses the invocation hotkey and then cancels
+- **THEN** the selection is unchanged
 
 #### Scenario: Application does not expose its selection
 
 - **WHEN** the focused application provides no way to read the selection directly
-- **THEN** the system falls back to a clipboard-based replacement
+- **THEN** the system falls back to a clipboard-based read
 - **AND** the user's previous clipboard contents are restored afterward
 
 #### Scenario: Clipboard is unavailable during the fallback
@@ -41,26 +49,32 @@ conversion, in place.
 
 #### Scenario: Clipboard fallback is disabled
 
-- **WHEN** the user has disabled the clipboard fallback and the application does not
-  expose its selection
+- **WHEN** the user has disabled the clipboard fallback and the application does not expose its selection
 - **THEN** no conversion occurs
 - **AND** the system reports that the application is not supported without the fallback
 
 ### Requirement: Active layout follows a correction
 
-After a successful correction the system SHALL switch the active keyboard layout to the
-one the text was converted into, so the user can continue typing in that language. This
-behavior SHALL be configurable and SHALL be enabled by default.
+The system SHALL change the active keyboard layout after a correction only when the user
+commits with an explicit request to do so. A commit without that request SHALL NOT
+intentionally change the active layout.
 
-#### Scenario: Correction into Ukrainian
+Where the request is made, the system SHALL name the target layout before the commit, and
+SHALL report a switch that failed or could not be confirmed rather than assuming it succeeded.
 
-- **WHEN** text is corrected into the Ukrainian layout
-- **THEN** the active layout for the focused window becomes Ukrainian
-- **AND** subsequent typing produces Ukrainian characters without further action
+#### Scenario: Correction into Ukrainian with an explicit switch
 
-#### Scenario: Layout following is disabled
+- **WHEN** the user commits a candidate whose target is Ukrainian, requesting a layout change
+- **THEN** the text is replaced and the active layout for the focused window becomes Ukrainian
 
-- **WHEN** the user has disabled layout following and a correction occurs
-- **THEN** the text is corrected
-- **AND** the active layout is left unchanged
+#### Scenario: Correction without a layout change
+
+- **WHEN** the user commits a candidate without requesting a layout change
+- **THEN** the text is replaced and the active layout is left unchanged
+
+#### Scenario: The application declines the layout change
+
+- **WHEN** a layout change is requested and the target application does not adopt it
+- **THEN** the system reports that the switch could not be confirmed
+- **AND** does not report the switch as successful
 

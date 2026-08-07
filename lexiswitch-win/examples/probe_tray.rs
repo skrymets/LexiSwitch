@@ -1,44 +1,40 @@
-//! Which tray-icon configuration does the shell actually talk to?
+//! Does the real tray code receive clicks, or only a hand-rolled icon?
 //!
-//! Three fixes to the tray menu in a row each addressed a real defect and none of them made a
-//! right-click work, because each was verified on the half of the problem that could be
-//! reached from inside the process. Posting the callback message by hand opens the menu; the
-//! shell never sends one. So the fault is in how the icon is registered, and the only way to
-//! find it is to register several ways at once and see which the shell speaks to.
+//! An earlier version of this probe added icons with raw `Shell_NotifyIcon` calls and they
+//! received right-clicks normally, while the application's icon received nothing. That was a
+//! useless comparison: the probe was minimal, so the difference between it and the application
+//! was *everything the application does*, and the one thing that mattered was hidden among the
+//! rest. A differential test is only as good as the differences it actually reproduces.
+//!
+//! This puts both on the same footing. One window — the product's own [`MessageWindow`] —
+//! carries two icons:
+//!
+//! | uID | Added by | Modified afterwards |
+//! |-----|----------|---------------------|
+//! | 1   | the product's [`Tray`], then a balloon | yes, `NIM_MODIFY` |
+//! | 99  | raw `NIM_ADD` here, nothing else       | no |
+//!
+//! Same process, same thread, same window, same message loop, same callback message. The only
+//! difference left is the code that registers and then modifies the icon.
 //!
 //!   cargo run -p lexiswitch-win --example probe_tray
 //!
-//! Adds three icons, then reports every callback the shell delivers:
+//! Right-click **both** icons. Each callback is logged with the id that produced it, so the
+//! answer is which ids appear:
 //!
-//! | Icon | Window       | Protocol |
-//! |------|--------------|----------|
-//! | ⚠    | message-only | legacy   |
-//! | ?    | top-level    | legacy   |
-//! | 🛈    | top-level    | version 4 |
-//!
-//! Hover over each, then left-click, then right-click. A line per event names which icon it
-//! came from. An icon that produces no lines is one the shell is not talking to, and an icon
-//! with no tooltip is the same finding by another route — the tooltip needs no message loop,
-//! so losing it means the registration itself is wrong rather than the handling.
-//!
-//! Ctrl+C to stop. Icons are removed on the way out.
+//! - **both** — the tray code is fine and the fault is elsewhere in the application
+//! - **99 only** — the product's registration path is what loses the callback
+//! - **neither** — the window or the loop is at fault, not the icon
 
 use std::io::Write;
 
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use lexiswitch_win::tray::{Tray, WM_TRAY};
+use lexiswitch_win::window::{Flow, MessageWindow};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
-    NOTIFYICONDATAW, NOTIFYICONDATAW_0, NOTIFYICON_VERSION_4,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, LoadIconW, RegisterClassW,
-    HWND_MESSAGE, IDI_ASTERISK, IDI_QUESTION, IDI_WARNING, MSG, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
-};
-
-const CALLBACK: u32 = WM_APP + 1;
+use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_WARNING};
 
 macro_rules! say {
     ($($arg:tt)*) => {{
@@ -47,157 +43,77 @@ macro_rules! say {
     }};
 }
 
-/// One registration under test.
-struct Variant {
-    id: u32,
-    label: &'static str,
-    v4: bool,
-}
+const CONTROL_ID: u32 = 99;
 
-const VARIANTS: [Variant; 3] = [
-    Variant { id: 1, label: "A  message-only window, legacy protocol", v4: false },
-    Variant { id: 2, label: "B  top-level window,    legacy protocol", v4: false },
-    Variant { id: 3, label: "C  top-level window,    version 4", v4: true },
-];
-
-fn make_window(class: PCWSTR, top_level: bool) -> HWND {
-    // SAFETY: the class name is a static wide string with a NUL and the WNDCLASSW is fully
-    // initialised before registration. A zero return from RegisterClassW means the class is
-    // already registered, which is harmless; CreateWindowExW is the real check.
-    unsafe {
-        let hinstance = GetModuleHandleW(None).expect("module handle");
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(wndproc),
-            hInstance: hinstance.into(),
-            lpszClassName: class,
-            ..Default::default()
-        };
-        let _ = RegisterClassW(&wc);
-        CreateWindowExW(
-            if top_level {
-                WS_EX_TOOLWINDOW
-            } else {
-                WINDOW_EX_STYLE(0)
-            },
-            class,
-            w!("probe_tray"),
-            if top_level {
-                WS_POPUP
-            } else {
-                WINDOW_STYLE(0)
-            },
-            0,
-            0,
-            0,
-            0,
-            if top_level { None } else { Some(HWND_MESSAGE) },
-            None,
-            Some(hinstance.into()),
-            None,
-        )
-        .expect("creating the window")
-    }
-}
-
-fn add_icon(hwnd: HWND, v: &Variant, tip: &str) {
+/// A second icon on the same window, added once and never touched again.
+fn add_control(hwnd: HWND) -> bool {
     let mut data = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
-        uID: v.id,
+        uID: CONTROL_ID,
         uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
-        uCallbackMessage: CALLBACK,
-        Anonymous: NOTIFYICONDATAW_0 {
-            uVersion: if v.v4 { NOTIFYICON_VERSION_4 } else { 0 },
-        },
+        uCallbackMessage: WM_TRAY,
         ..Default::default()
     };
-
-    // SAFETY: built-in resource identifiers need no module handle, and `data` is fully
-    // initialised with a matching cbSize before every call.
+    // SAFETY: a built-in resource identifier needs no module handle, and `data` is fully
+    // initialised with a matching cbSize.
     unsafe {
-        let icon = match v.id {
-            1 => IDI_WARNING,
-            2 => IDI_QUESTION,
-            _ => IDI_ASTERISK,
-        };
-        data.hIcon = LoadIconW(None, icon).expect("built-in icon");
-        for (i, ch) in tip.encode_utf16().take(127).enumerate() {
+        data.hIcon = LoadIconW(None, IDI_WARNING).expect("built-in icon");
+        for (i, ch) in "CONTROL raw add, never modified"
+            .encode_utf16()
+            .take(127)
+            .enumerate()
+        {
             data.szTip[i] = ch;
         }
-
-        let added = Shell_NotifyIconW(NIM_ADD, &data).as_bool();
-        let versioned = if v.v4 {
-            Shell_NotifyIconW(NIM_SETVERSION, &data).as_bool()
-        } else {
-            true
-        };
-        say!("  {}   NIM_ADD={added}  NIM_SETVERSION={versioned}", v.label);
+        Shell_NotifyIconW(NIM_ADD, &data).as_bool()
     }
 }
 
-fn remove_icon(hwnd: HWND, id: u32) {
+fn remove_control(hwnd: HWND) {
     let data = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
-        uID: id,
+        uID: CONTROL_ID,
         ..Default::default()
     };
-    // SAFETY: removing an icon this process added, with a matching cbSize.
+    // SAFETY: removing an icon this process added.
     unsafe {
         let _ = Shell_NotifyIconW(NIM_DELETE, &data);
     }
 }
 
-/// SAFETY (contract on the caller, which is Windows): invoked by the window manager for a
-/// window of one of these classes. Nothing here dereferences `wp` or `lp`.
-unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == CALLBACK {
-        // Decoded both ways, because which is correct is the question. Legacy puts the icon id
-        // in wParam and the event in lParam; version 4 puts the cursor in wParam and packs the
-        // event into the low word of lParam with the id in the high word.
-        let legacy_id = wp.0 as u32;
-        let legacy_event = lp.0 as u32;
-        let v4_event = (lp.0 as u32) & 0xFFFF;
-        let v4_id = ((lp.0 as u32) >> 16) & 0xFFFF;
-        say!(
-            "    callback  wParam=0x{:08X} lParam=0x{:08X}   legacy(id={legacy_id} event=0x{legacy_event:04X})   v4(id={v4_id} event=0x{v4_event:04X})",
-            wp.0 as u32,
-            lp.0 as u32
-        );
-    }
-    // SAFETY: forwarding the exact arguments Windows passed to the default handler.
-    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
-}
-
 fn main() {
-    let msg_only = make_window(w!("ProbeTrayMessageOnly"), false);
-    let top_level = make_window(w!("ProbeTrayTopLevel"), true);
-    say!("probe_tray — three registrations, one shell.");
-    say!("  message-only window: {:?}", msg_only.0);
-    say!("  top-level window:    {:?}", top_level.0);
+    let window = MessageWindow::new().expect("message window");
+    say!("probe_tray — the product's tray code against a raw control, same window.");
+    say!("  window: {:?}", window.hwnd().0);
+
+    let tray = Tray::new(window.hwnd(), "PRODUCT via Tray").expect("tray");
+    say!("  uID 1  added by the product's Tray");
+
+    // The application shows a balloon immediately after adding its icon, so the probe does
+    // too. This is the call under suspicion: it is a NIM_MODIFY, and whether it costs the
+    // icon its callback is exactly what this run is meant to decide.
+    tray.notify("probe_tray", "balloon sent, exactly as the product does at startup");
+    say!("  uID 1  balloon sent (NIM_MODIFY)");
+
+    say!("  uID 99 added raw, and will not be modified: {}", add_control(window.hwnd()));
+    say!();
+    say!("Right-click BOTH icons, then close this window.");
+    say!("  'PRODUCT via Tray'            is uID 1");
+    say!("  'CONTROL raw add, never...'   is uID 99");
     say!();
 
-    add_icon(msg_only, &VARIANTS[0], "A message-only legacy");
-    add_icon(top_level, &VARIANTS[1], "B top-level legacy");
-    add_icon(top_level, &VARIANTS[2], "C top-level v4");
-
-    say!();
-    say!("Now hover, left-click and right-click each of the three new icons.");
-    say!("Each line below names the icon by id: 1=A, 2=B, 3=C.");
-    say!("An icon that never appears below is one the shell is not talking to.");
-    say!("Tooltips tell the same story without any messages at all — an icon with no");
-    say!("tooltip is mis-registered rather than mis-handled.");
-    say!();
-
-    let mut msg = MSG::default();
-    // SAFETY: `msg` is valid for the whole call; GetMessageW returns 0 for WM_QUIT.
-    unsafe {
-        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-            let _ = DispatchMessageW(&msg);
+    let _ = window.run(|msg| {
+        if msg.message == WM_TRAY {
+            say!(
+                "  callback  uID={}  event=0x{:04X}",
+                msg.wParam.0 as u32,
+                msg.lParam.0 as u32
+            );
         }
-    }
+        Flow::Continue
+    });
 
-    remove_icon(msg_only, 1);
-    remove_icon(top_level, 2);
-    remove_icon(top_level, 3);
+    remove_control(window.hwnd());
 }

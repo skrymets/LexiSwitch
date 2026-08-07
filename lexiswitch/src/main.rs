@@ -18,7 +18,9 @@ use std::error::Error;
 
 use lexiswitch_core::config::Config;
 use lexiswitch_core::layout::LayoutTable;
+use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
+use lexiswitch_win::inject::FocusGuard;
 use lexiswitch_win::layouts::{self, InstalledLayout};
 use lexiswitch_win::tray::{tray_event, MenuCommand, State, Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
@@ -174,10 +176,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
                     if let Some((from, to)) = pick_pair(&layouts) {
+                        // The application is logged because every measurement so far has been
+                        // taken against Notepad on an assumption that was never checked, and a
+                        // conversion that behaves differently elsewhere is exactly the case
+                        // this program exists to handle.
                         log.note(&format!(
-                            "selection_requested from={} to={}",
+                            "selection_requested from={} to={} app={}",
                             from.name(),
-                            to.name()
+                            to.name(),
+                            process_name(FocusGuard::capture().window())
                         ));
                         work.send(Job::Selection {
                             from,

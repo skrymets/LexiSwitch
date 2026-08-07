@@ -100,7 +100,6 @@ impl Tray {
     pub fn new(hwnd: HWND, tooltip: &str) -> Result<Self, WinError> {
         let mut data = Self::base(hwnd);
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        data.uCallbackMessage = WM_TRAY;
         // The tray starts enabled; nothing has had a chance to disable it yet.
         data.hIcon = load_icon(State::Enabled)?;
         write_wide(&mut data.szTip, tooltip);
@@ -127,7 +126,8 @@ impl Tray {
     pub fn set_state(&self, state: State) {
         let Ok(icon) = load_icon(state) else { return };
         let mut data = Self::base(self.hwnd);
-        data.uFlags = NIF_ICON | NIF_TIP;
+        // NIF_MESSAGE on every modify, or this call silently unhooks the icon.
+        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         data.hIcon = icon;
         write_wide(
             &mut data.szTip,
@@ -199,7 +199,8 @@ impl Tray {
     /// take down whatever it was reporting on.
     pub fn notify(&self, title: &str, body: &str) {
         let mut data = Self::base(self.hwnd);
-        data.uFlags = NIF_INFO;
+        // NIF_MESSAGE on every modify, or this call silently unhooks the icon.
+        data.uFlags = NIF_INFO | NIF_MESSAGE;
         data.dwInfoFlags = NOTIFY_ICON_INFOTIP_FLAGS(0);
         write_wide(&mut data.szInfoTitle, title);
         write_wide(&mut data.szInfo, body);
@@ -210,11 +211,21 @@ impl Tray {
         }
     }
 
+    /// The fields every call shares.
+    ///
+    /// `uCallbackMessage` is set here rather than only on `NIM_ADD`, and every caller ORs
+    /// `NIF_MESSAGE` into its flags, because the alternative was measured to break the icon.
+    /// `..Default::default()` zeroes the callback, so a `NIM_MODIFY` that did not re-assert it
+    /// left the shell with no message to send — and the very first thing this program does
+    /// after adding its icon is show a balloon, which is a `NIM_MODIFY`. The result was an icon
+    /// with a working tooltip that silently swallowed every click, because the tooltip is drawn
+    /// from data the shell already holds and needs no callback at all.
     fn base(hwnd: HWND) -> NOTIFYICONDATAW {
         NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: ICON_ID,
+            uCallbackMessage: WM_TRAY,
             // Left at zero: the legacy protocol. See `new` for why version 4 was tried and
             // taken back out.
             Anonymous: NOTIFYICONDATAW_0 { uVersion: 0 },

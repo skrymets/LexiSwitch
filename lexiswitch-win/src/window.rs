@@ -19,9 +19,9 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassW, MSG, WM_APP, WM_DESTROY, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, InSendMessage,
+    PostMessageW, PostQuitMessage, RegisterClassW, MSG, WM_APP, WM_DESTROY, WNDCLASSW,
+    WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::WinError;
@@ -198,6 +198,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         unsafe { PostQuitMessage(0) };
         return LRESULT(0);
     }
+
+    // Turn a *sent* application message into a *posted* one.
+    //
+    // `GetMessageW` returns posted messages only. A message another thread sends is not queued
+    // at all — it is dispatched straight here, inside the `GetMessageW` call, and the loop
+    // never sees it. The shell sends notify-icon callbacks, so every tray click reached this
+    // function and stopped, while [`MessageWindow::run`]'s handler — where this program does
+    // its work — waited for something that was never going to arrive.
+    //
+    // Measured rather than reasoned: sending `WM_APP + 1` to this window produced nothing and
+    // posting the identical message produced a callback, which is also why hand-posting opened
+    // the tray menu while a real right-click did not.
+    //
+    // Restricted to the application range so system messages, which are sent constantly and
+    // whose return values matter, keep going to the default handler. The re-posted copy comes
+    // back through the queue with `InSendMessage` false, so it is dispatched once and not
+    // bounced again.
+    //
+    // SAFETY: `InSendMessage` has no preconditions, and posting to the window this procedure
+    // was called for cannot outlive it — a failed post is reported as a bool this ignores.
+    if msg >= WM_APP && unsafe { InSendMessage() }.as_bool() {
+        // SAFETY: posting to the window this procedure was invoked for, which cannot have been
+        // destroyed while it is running. A failed post returns false, which is ignored because
+        // there is nothing to clean up and nowhere better to report it from.
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), msg, wp, lp);
+        }
+        return LRESULT(0);
+    }
+
     // SAFETY: forwarding the exact arguments Windows passed to the default handler.
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }

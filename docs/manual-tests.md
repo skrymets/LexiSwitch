@@ -324,6 +324,74 @@ manual testing.
 > [`environment.md`](environment.md) §6 on the grounds that the binary is not distributed,
 > is a plausible cause that the pivot does not touch.
 
+### Tray clicks never reached the message loop
+
+**Observed 2026-08-07.** The tray menu could not be opened by clicking the icon, through four
+attempted fixes, each of which addressed a real defect and none of which was the cause.
+
+The cause is that `GetMessageW` returns **posted** messages only. A message another thread
+*sends* is never queued — it is dispatched straight into the window procedure, from inside the
+`GetMessageW` call — and the shell **sends** notify-icon callbacks. This program does its work
+in the message-loop handler, so every tray click reached the window procedure and stopped
+there.
+
+Measured with one variable, same window, same message:
+
+```
+SendMessage(hwnd, WM_APP+1, 1, WM_RBUTTONUP)   ->  nothing
+PostMessage(hwnd, WM_APP+1, 1, WM_RBUTTONUP)   ->  handler runs, menu opens
+```
+
+The window procedure now re-posts sent application-range messages so the loop sees them. With
+that in place the log shows what had been discarded all along, including `NIN_BALLOONSHOW` and
+`NIN_BALLOONTIMEOUT` for the program's own startup balloon.
+
+**What made this cost four attempts** is worth more than the fix. Each earlier attempt was
+verified only on the half of the system reachable from inside the process — posting the message
+by hand opened the menu, which proved the handling was correct and said nothing about delivery.
+Two of the fixes were genuine bugs (a message-only window cannot take the foreground, which
+`TrackPopupMenu` requires; and the documented message after `TrackPopupMenu` was missing) but
+neither was the reported symptom, and both were presented as though they were.
+
+The first `probe_tray` was useless here because it was *minimal*: it logged in the window
+procedure, so it saw the callbacks and reported the shell was behaving. The difference between
+a minimal probe and the real program is everything the program does, and the one difference
+that mattered was hidden among the rest. A differential test is only as good as the differences
+it reproduces.
+
+---
+
+### OPEN: converting a selection in Notepad++ deletes it
+
+**Reproduced 2026-08-07, not diagnosed, not fixed.**
+
+```
+fresh tab                      -> empty
+paste "Еуче шт Утпдшір"        -> present
+select all, press Shift+Pause  -> DOCUMENT EMPTY
+log: selection_requested from=de-DE to=en-US app=notepad++.exe
+     outcome_failed: nothing is selected; nothing was changed
+```
+
+The program reports that it did nothing while the text disappears. On that path the only
+synthetic input sent is `Ctrl+C`, and the code returns before any paste — and `Ctrl+C` does not
+delete text in Notepad or Notepad++ when exercised in isolation
+(`examples/probe_modifier.rs`, both with and without a modifier held).
+
+**The control that has not been run** is the same sequence with LexiSwitch not running at all.
+If the text still vanishes, the harness is at fault rather than the program, and several of the
+dead ends above were self-inflicted in exactly that way.
+
+Deliberately not pursued further. `convert_selection` replaces text the moment the hotkey is
+pressed, and `add-candidate-chooser` removes that path entirely: the chooser reads the
+selection, presents candidates, and modifies nothing until an explicit commit. Silently
+mangling a selection is the failure mode the pivot exists to eliminate, so hardening the code
+scheduled for deletion is the wrong place to spend. **Re-test this case once the chooser
+lands** — if it survives the rewrite, it is a genuine defect in the read or replace primitives
+rather than in the path being retired.
+
+---
+
 ### What the shell actually sends a tray icon
 
 **Observed 2026-08-07.** Three fixes to the tray menu in a row each addressed a real defect

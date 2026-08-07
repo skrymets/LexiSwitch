@@ -10,9 +10,10 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 
+use lexiswitch_core::candidates;
 use lexiswitch_core::layout::LayoutTable;
 use lexiswitch_win::focus::Uia;
-use lexiswitch_win::selection;
+use lexiswitch_win::transaction::Transaction;
 use lexiswitch_win::window::Waker;
 
 /// Work handed to the worker. Everything here is owned data — nothing borrows from the
@@ -21,10 +22,16 @@ use lexiswitch_win::window::Waker;
 // at human speed. Boxing the tables would add indirection to buy nothing measurable.
 #[allow(clippy::large_enum_variant)]
 pub enum Job {
-    /// Convert whatever is selected, automation first.
+    /// Convert whatever is selected.
+    ///
+    /// Carries every installed layout rather than a chosen pair: which conversions are
+    /// plausible is decided from the selected characters, not from what happens to be active
+    /// ([ADR-0012](../../docs/adr/0012-single-chooser-transaction.md)).
     Selection {
-        from: LayoutTable,
-        to: LayoutTable,
+        tables: Vec<LayoutTable>,
+        /// The layout active in the focused window, as a weak tiebreak on the *target* only.
+        /// It is never allowed to choose a source.
+        active: Option<String>,
         allow_clipboard: bool,
     },
     /// Finish and let the thread exit.
@@ -98,34 +105,67 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
         let outcome = match job {
             Job::Stop => break,
             Job::Selection {
-                from,
-                to,
+                tables,
+                active,
                 allow_clipboard,
-            } => match selection::convert_selection(
-                uia.as_ref().and_then(|u| u.automation()),
-                // No owner window: the worker owns none, and the clipboard does not need
-                // one for reading and writing.
-                windows::Win32::Foundation::HWND(std::ptr::null_mut()),
-                &from,
-                &to,
-                allow_clipboard,
-                5,
-            ) {
-                // Only when something was actually destroyed. Every conversion goes through
-                // the clipboard now (ADR-0010), so announcing that it did would be a
-                // notification on every single use and would train the user to dismiss it.
-                Ok(done) if done.lost_nontext => Outcome::Note {
-                    title: "Selection converted".into(),
-                    body: "The clipboard held an image or formatted content, which the \
-                           conversion destroyed. Text on it was restored."
-                        .into(),
-                },
-                Ok(_) => Outcome::Quiet,
-                Err(e) => Outcome::Failed {
-                    title: "Selection not converted".into(),
-                    body: e.to_string(),
-                },
-            },
+            } => {
+                // No owner window: the worker owns none, and the clipboard does not need one.
+                let owner = windows::Win32::Foundation::HWND(std::ptr::null_mut());
+                match Transaction::begin(
+                    uia.as_ref().and_then(|u| u.automation()),
+                    owner,
+                    allow_clipboard,
+                    5,
+                ) {
+                    Err(e) => Outcome::Failed {
+                        title: "Selection not converted".into(),
+                        body: e.to_string(),
+                    },
+                    Ok(transaction) => {
+                        let found = candidates::generate(
+                            transaction.original(),
+                            &tables,
+                            active.as_deref(),
+                        );
+                        match found.first() {
+                            // A real answer, and a different one from a failure: the selection
+                            // was read fine, and no installed layout pair changes it.
+                            None => {
+                                let cancelled = transaction.cancel();
+                                Outcome::Failed {
+                                    title: "No conversion found".into(),
+                                    body: match cancelled {
+                                        Ok(()) => "No installed keyboard layout converts the                                                    selected text into anything different."
+                                            .into(),
+                                        Err(e) => format!(
+                                            "No installed keyboard layout converts the selected                                              text into anything different. Additionally: {e}"
+                                        ),
+                                    },
+                                }
+                            }
+                            // Until the chooser exists, the highest-ranked candidate is applied
+                            // directly. That is deliberately temporary: the pivot requires that
+                            // nothing is modified before an explicit commit, and this is the
+                            // one part of that promise not yet kept.
+                            Some(best) => {
+                                let label = format!("{} to {}", best.from, best.to);
+                                match transaction.commit(&best.text) {
+                                    Ok(done) if done.lost_nontext => Outcome::Note {
+                                        title: format!("Converted, {label}"),
+                                        body: "The clipboard held an image or formatted                                                content, which the conversion destroyed. Text                                                on it was restored."
+                                            .into(),
+                                    },
+                                    Ok(_) => Outcome::Quiet,
+                                    Err(e) => Outcome::Failed {
+                                        title: "Selection not converted".into(),
+                                        body: e.to_string(),
+                                    },
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         };
 
         if out.send(outcome).is_ok() {

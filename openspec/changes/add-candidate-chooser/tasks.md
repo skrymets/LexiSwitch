@@ -46,10 +46,15 @@ fixtures.
 
 ## 5. Retire the old direction logic
 
-- [ ] 5.1 Remove the derivation of conversion direction from the foreground window's active input language
-- [ ] 5.2 Keep the active layout as contextual display and a weak ranking signal only
-- [ ] 5.3 Remove unconditional layout switching after a correction; it happens only on an explicit commit
+- [x] 5.1 Remove the derivation of conversion direction from the foreground window's active input language
+- [x] 5.2 Keep the active layout as contextual display and a weak ranking signal only
+- [x] 5.3 Remove unconditional layout switching after a correction; it happens only on an explicit commit
 - [ ] 5.4 Confirm: text typed under one layout converts correctly while a different layout is active — the case that silently did nothing before
+      *Partial. A run against Notepad logged `selection_requested active=en-US app=Notepad.exe`
+      followed by `outcome_note` — a Cyrillic selection converting while `en-US` was active, which
+      is the case that previously produced `outcome_failed`. The resulting document text was not
+      read back, so this is evidence of the fix and not yet proof of it. Close it under the group 7
+      end-to-end pass, where the document is checked anyway.*
 
 ## 6. Privacy
 

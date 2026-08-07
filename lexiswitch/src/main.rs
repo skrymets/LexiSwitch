@@ -17,7 +17,7 @@
 use std::error::Error;
 
 use lexiswitch_core::config::Config;
-use lexiswitch_core::layout::LayoutTable;
+
 use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
 use lexiswitch_win::inject::FocusGuard;
@@ -175,23 +175,22 @@ fn run() -> Result<(), Box<dyn Error>> {
                     return Flow::Continue;
                 }
                 if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
-                    if let Some((from, to)) = pick_pair(&layouts) {
-                        // The application is logged because every measurement so far has been
-                        // taken against Notepad on an assumption that was never checked, and a
-                        // conversion that behaves differently elsewhere is exactly the case
-                        // this program exists to handle.
-                        log.note(&format!(
-                            "selection_requested from={} to={} app={}",
-                            from.name(),
-                            to.name(),
-                            process_name(FocusGuard::capture().window())
-                        ));
-                        work.send(Job::Selection {
-                            from,
-                            to,
-                            allow_clipboard: config.selection.allow_clipboard_fallback,
-                        });
-                    }
+                    // Every installed layout goes across, not a chosen pair. Which conversions
+                    // are plausible is decided from the selected characters; the active layout
+                    // travels only as a weak tiebreak on the target, because it is a fact about
+                    // the present and says nothing about text typed at any earlier time
+                    // (ADR-0012).
+                    let active = layout_name(&layouts, layouts::foreground_langid());
+                    log.note(&format!(
+                        "selection_requested active={} app={}",
+                        active.as_deref().unwrap_or("unknown"),
+                        process_name(FocusGuard::capture().window())
+                    ));
+                    work.send(Job::Selection {
+                        tables: layouts.iter().map(|l| l.table.clone()).collect(),
+                        active,
+                        allow_clipboard: config.selection.allow_clipboard_fallback,
+                    });
                 }
             }
             // Logged unconditionally, before any guard. Two rounds of fixing this menu have
@@ -312,19 +311,15 @@ fn open_config(path: &Option<std::path::PathBuf>, tray: &Tray) {
     }
 }
 
-/// Source and target layout tables for a conversion, cloned so they can cross to the worker
-/// without borrowing anything the message loop owns.
+/// The table name for a language id, for use as the weak ranking hint.
 ///
-/// Still derived from the foreground window's active layout, which is not evidence of what the
-/// selected text was typed under — the defect `add-candidate-chooser` exists to fix by
-/// generating candidates from the characters themselves. Left in place here so that retiring
-/// capture does not also change how conversion picks its direction: one change, one behaviour.
-fn pick_pair(layouts: &[InstalledLayout]) -> Option<(LayoutTable, LayoutTable)> {
-    let langid = layouts::foreground_langid();
-    let from = layouts
+/// All that survives of `pick_pair`, which chose a conversion's *source* from the foreground
+/// window's active input language. That is a fact about the present and not evidence about
+/// text that may have been typed at any time, which is why selecting mistyped text after
+/// switching layouts silently did nothing at all.
+fn layout_name(layouts: &[InstalledLayout], langid: u16) -> Option<String> {
+    layouts
         .iter()
         .find(|l| l.langid == langid)
-        .or_else(|| layouts.first())?;
-    let to = layouts.iter().find(|l| l.langid != from.langid)?;
-    Some((from.table.clone(), to.table.clone()))
+        .map(|l| l.table.name().to_string())
 }

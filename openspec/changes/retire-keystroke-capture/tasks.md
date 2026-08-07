@@ -51,7 +51,14 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 - [x] 6.1 `cargo test --workspace` green, with only the deleted suites missing
 - [x] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
 - [ ] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
-- [ ] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)
+      *Measured, but the budget does not say which measure it means and the two answers differ:
+      working set peaks at 22.2 MB (fails), private working set peaks at 2.9 MB (passes with two
+      orders of margin). The gap is shared system DLLs — UI Automation and the shell — mapped on
+      the first conversion. No leak either way. Needs a decision on the budget's wording, not a
+      better measurement.*
+- [x] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)
+      *An hour of five-minute samples: no TCP connection to any non-loopback address and no UDP
+      endpoint at any point, including across conversions. Recorded in `docs/manual-tests.md`.*
 - [x] 6.5 Rewrite the manual checklist for the reduced product and execute it (migrated from 10.7)
 - [x] 6.6 **Experiment:** run the release build before and after the removal and record whether it is blocked. Outcome: **not blocked either way** — the 2026-08-05 block does not reproduce, so there was no failing baseline to improve on and the brief's §22 endpoint-protection criterion cannot be met by this work. Recorded in `docs/manual-tests.md`; the Falcon console itself is not readable from here, so "launches and is not quarantined" is the observable used
 

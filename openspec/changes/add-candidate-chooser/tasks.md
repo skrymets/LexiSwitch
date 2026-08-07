@@ -49,12 +49,10 @@ fixtures.
 - [x] 5.1 Remove the derivation of conversion direction from the foreground window's active input language
 - [x] 5.2 Keep the active layout as contextual display and a weak ranking signal only
 - [x] 5.3 Remove unconditional layout switching after a correction; it happens only on an explicit commit
-- [ ] 5.4 Confirm: text typed under one layout converts correctly while a different layout is active — the case that silently did nothing before
-      *Partial. A run against Notepad logged `selection_requested active=en-US app=Notepad.exe`
-      followed by `outcome_note` — a Cyrillic selection converting while `en-US` was active, which
-      is the case that previously produced `outcome_failed`. The resulting document text was not
-      read back, so this is evidence of the fix and not yet proof of it. Close it under the group 7
-      end-to-end pass, where the document is checked anyway.*
+- [x] 5.4 Confirm: text typed under one layout converts correctly while a different layout is active — the case that silently did nothing before
+      *Proven with a document readback: `Ghbdsn/ " gbnfyyz ojlj ndj'] ghtptynfws]`, typed with
+      en-US active while meaning Ukrainian, became `Привіт. Є питання щодо твоєї презентації`
+      through the real hotkey path.*
 
 ## 6. Privacy
 
@@ -65,10 +63,12 @@ fixtures.
 
 ## 7. Verification
 
-- [ ] 7.1 `cargo test -p lexiswitch-core` green with the generation suite, no Windows required
-- [ ] 7.2 `cargo clippy --workspace --all-targets` clean, SAFETY comments on every new unsafe block
-- [ ] 7.3 `cargo build --release`, binary under 5 MB
-- [ ] 7.4 End to end in Notepad: invoke, navigate, apply, one `Ctrl+Z` reverts the whole conversion
+- [x] 7.1 `cargo test -p lexiswitch-core` green with the generation suite, no Windows required
+- [x] 7.2 `cargo clippy --workspace --all-targets` clean, SAFETY comments on every new unsafe block
+- [x] 7.3 `cargo build --release`, binary under 5 MB
+- [x] 7.4 End to end in Notepad: invoke, navigate, apply, one `Ctrl+Z` reverts the whole conversion
+      *Through the running release binary: Shift+Pause with Shift held 1.5 s, chooser still on
+      screen after 5 s, Enter applied, and a single Ctrl+Z restored the original exactly.*
 - [ ] 7.5 End to end in an application exposing no text pattern, exercising the clipboard read
 - [ ] 7.6 End to end in a browser text field, run twice, confirming both read paths are handled without caching
 - [ ] 7.7 Confirm the clipboard is intact after apply, after cancel, and after a failed replacement

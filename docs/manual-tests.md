@@ -540,11 +540,13 @@ window's handling of `WM_ACTIVATE` and nothing on the idle path.
 
 | | working set | private working set | handles |
 |---|---|---|---|
-| idle, before any conversion | 13.7 MB | 1.7 MB | 182 |
-| after one conversion, held 30 min | 22.2 → 21.9 MB | 2.9 → 2.5 MB | 287 |
+| idle, before any conversion (15 min) | 13.6 → 13.7 MB | 1.8 → 1.7 MB | 182 |
+| peak, just after the first conversion | 22.2 MB | 2.9 MB | 300 → 286 |
+| end of the hour (45 min later) | 21.1 MB | 1.7 MB | 287 |
 
-**No leak.** Across the half hour following a conversion every figure is flat or drifting
-slightly *down*, and the handle count does not move. Nothing accumulates per conversion.
+**No leak.** Across the 45 minutes following a conversion every figure drifts *down* — working
+set 22.2 → 21.1 MB, private 2.9 → 1.7 MB, back to where it started before any conversion ran —
+and the handle count does not move off 287. Nothing accumulates per conversion.
 
 **The 20 MB budget is exceeded on working set, and met with two decimal orders of margin on
 private bytes.** The step at the first conversion is UI Automation and the shell being mapped

@@ -21,7 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_C,
     VK_CONTROL, VK_V,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 use crate::WinError;
 
@@ -62,6 +62,23 @@ impl FocusGuard {
     /// The captured window.
     pub fn window(&self) -> HWND {
         HWND(self.hwnd as *mut std::ffi::c_void)
+    }
+
+    /// Bring the captured window back to the foreground.
+    ///
+    /// Needed because a chooser has to take focus to read the keyboard, so the application
+    /// being edited loses it and must have it back before anything is pasted. Windows permits
+    /// this in the case that matters here — a process giving the foreground away from a window
+    /// it already owns — and the round trip was measured before the design depended on it, in
+    /// [the focus round-trip findings](../../docs/spikes/2026-08-07-focus-round-trip.md):
+    /// the selection survives, and the handback needed no settle at all.
+    ///
+    /// Returns whether Windows accepted it. A refusal is worth reporting rather than pasting
+    /// into whatever happens to be in front instead.
+    pub fn restore_foreground(&self) -> bool {
+        // SAFETY: no preconditions. Passing a stale handle makes the call fail, which is the
+        // bool this returns.
+        unsafe { SetForegroundWindow(self.window()) }.as_bool()
     }
 }
 

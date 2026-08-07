@@ -135,7 +135,7 @@ const PASTE_SETTLE: std::time::Duration = std::time::Duration::from_millis(180);
 ///
 /// `previous` is what the clipboard held beforehand — captured by the caller, because the two
 /// read paths learn it at different moments and neither should snapshot our own payload.
-fn paste_replacement(
+pub fn paste_over_selection(
     guard: &FocusGuard,
     owner: HWND,
     text: &str,
@@ -236,7 +236,7 @@ pub fn convert_selection(
                 (clip.text(), clip.holds_nontext())
             };
 
-            paste_replacement(&guard, owner, &converted, attempts, previous)?;
+            paste_over_selection(&guard, owner, &converted, attempts, previous)?;
             return Ok(Converted {
                 via: ReadVia::Automation,
                 text: converted,
@@ -269,7 +269,7 @@ pub fn convert_selection(
         });
     };
 
-    paste_replacement(&guard, owner, &converted, attempts, read.previous.take())?;
+    paste_over_selection(&guard, owner, &converted, attempts, read.previous.take())?;
 
     Ok(Converted {
         via: ReadVia::Clipboard,

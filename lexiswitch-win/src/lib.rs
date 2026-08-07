@@ -33,6 +33,7 @@ pub mod inject;
 pub mod langswitch;
 pub mod layouts;
 pub mod selection;
+pub mod transaction;
 pub mod tray;
 pub mod window;
 

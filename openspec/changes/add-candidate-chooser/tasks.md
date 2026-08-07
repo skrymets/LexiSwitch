@@ -17,11 +17,11 @@ fixtures.
 
 ## 2. Transaction plumbing — `lexiswitch-win`
 
-- [ ] 2.1 Read the selection while the user's application still has focus, choosing the read path per invocation and caching nothing
-- [ ] 2.2 Snapshot the transaction state: original text, source window, clipboard state to restore
-- [ ] 2.3 Restore foreground to the original window on every exit path
-- [ ] 2.4 Wire the existing paste replacement to a committed candidate, unchanged from ADR-0010
-- [ ] 2.5 **Milestone:** invocation reads a selection, waits, restores focus, and replaces it with a fixed candidate — the round trip working end to end before any UI exists
+- [x] 2.1 Read the selection while the user's application still has focus, choosing the read path per invocation and caching nothing
+- [x] 2.2 Snapshot the transaction state: original text, source window, clipboard state to restore
+- [x] 2.3 Restore foreground to the original window on every exit path
+- [x] 2.4 Wire the existing paste replacement to a committed candidate, unchanged from ADR-0010
+- [x] 2.5 **Milestone:** invocation reads a selection, waits, restores focus, and replaces it with a fixed candidate — the round trip working end to end before any UI exists
 
 ## 3. Chooser window
 

@@ -28,12 +28,45 @@ type Unknown = BTreeMap<String, toml::Value>;
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub general: General,
     pub hotkeys: Hotkeys,
     pub layouts: Layouts,
     pub selection: Selection,
+    pub chooser: Chooser,
     pub logging: Logging,
     #[serde(flatten)]
     unknown: Unknown,
+}
+
+/// Settings with nowhere more specific to live.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct General {
+    /// Whether the shortcut converts. Written back when the tray toggle is used, so the choice
+    /// survives a restart — a setting the user changes through the interface has to appear in
+    /// the file, or the file stops being the complete description of behaviour.
+    pub enabled: bool,
+    #[serde(flatten)]
+    unknown: Unknown,
+}
+
+/// How the chooser presents candidates.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Chooser {
+    /// How many wrapped lines the expanded view shows before it scrolls. Clamped when read,
+    /// because a value of zero would produce a window with no room for the text it exists to
+    /// show, and a very large one a window taller than the screen.
+    pub expanded_lines: u32,
+    #[serde(flatten)]
+    unknown: Unknown,
+}
+
+impl Chooser {
+    /// The setting, held to a range that can actually be drawn.
+    pub fn expanded_lines(&self) -> i32 {
+        self.expanded_lines.clamp(3, 40) as i32
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -72,6 +105,24 @@ pub struct Logging {
     unknown: Unknown,
 }
 
+impl Default for General {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            unknown: Unknown::new(),
+        }
+    }
+}
+
+impl Default for Chooser {
+    fn default() -> Self {
+        Self {
+            expanded_lines: 10,
+            unknown: Unknown::new(),
+        }
+    }
+}
+
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
@@ -108,7 +159,9 @@ impl Config {
     /// happens — an unrecognised key never stops the program starting.
     pub fn ignored_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = self.unknown.keys().cloned().collect();
-        let sections: [(&str, &Unknown); 4] = [
+        let sections: [(&str, &Unknown); 6] = [
+            ("general", &self.general.unknown),
+            ("chooser", &self.chooser.unknown),
             ("hotkeys", &self.hotkeys.unknown),
             ("layouts", &self.layouts.unknown),
             ("selection", &self.selection.unknown),
@@ -225,8 +278,23 @@ fn locate(text: &str, section: &str, key: &str) -> Option<usize> {
 /// A commented-out setting is deliberately not treated as the setting. Editing it would leave
 /// the change invisible to the parser while looking correct in the editor.
 pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
+    rewrite_setting(
+        text,
+        "hotkeys",
+        "convert_selection",
+        &format!("\"{}\"", binding.replace('"', "\\\"")),
+    )
+}
+
+/// Write `value` into `table.key`, leaving every other byte of the file alone.
+///
+/// `value` is already TOML: quoted for a string, bare for a boolean or a number. The caller
+/// knows the type and this function deliberately does not — guessing would mean quoting `true`
+/// or failing to quote a binding that happens to look numeric.
+pub fn rewrite_setting(text: &str, table: &str, key: &str, value: &str) -> String {
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let setting = format!("convert_selection = \"{}\"", binding.replace('"', "\\\""));
+    let setting = format!("{key} = {value}");
+    let header = format!("[{table}]");
 
     let mut lines: Vec<String> = text.split_inclusive('\n').map(str::to_string).collect();
     let mut in_hotkeys = false;
@@ -240,7 +308,7 @@ pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
             if in_hotkeys {
                 hotkeys_end = Some(i);
             }
-            in_hotkeys = trimmed.starts_with("[hotkeys]");
+            in_hotkeys = trimmed.starts_with(&header);
             seen_hotkeys |= in_hotkeys;
             continue;
         }
@@ -248,10 +316,10 @@ pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
             continue;
         }
         // The key, with whatever spacing surrounds it before the `=`.
-        let Some((key, _)) = line.split_once('=') else {
+        let Some((found, _)) = line.split_once('=') else {
             continue;
         };
-        if key.trim() != "convert_selection" {
+        if found.trim() != key {
             continue;
         }
         // Keep any trailing comment: it is the user's note about this very setting.
@@ -288,7 +356,7 @@ pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
                     out.push_str(newline);
                 }
             }
-            out.push_str(&format!("[hotkeys]{newline}{setting}{newline}"));
+            out.push_str(&format!("{header}{newline}{setting}{newline}"));
             out
         }
     }

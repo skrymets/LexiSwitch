@@ -154,3 +154,42 @@ fn separates_an_appended_table_with_one_blank_line() {
         );
     }
 }
+
+/// Task 4.3: a setting changed through the interface appears in the file and survives a
+/// reload — which is the whole reason the interface writes to the file at all.
+#[test]
+fn a_changed_shortcut_survives_a_reload() {
+    let original = "# mine\n[hotkeys]\nconvert_selection = \"Shift+Pause\"\n\n[logging]\nenabled = true\n";
+    let written = rewrite_hotkey(original, "Ctrl+Alt+K");
+    let reloaded = lexiswitch_core::config::Config::parse(&written).expect("must reload");
+    assert_eq!(reloaded.hotkeys.convert_selection, "Ctrl+Alt+K");
+    assert!(reloaded.logging.enabled, "an unrelated setting was lost");
+    assert!(written.contains("# mine"), "a comment was lost");
+}
+
+/// The same, for the enable state the tray toggle writes back.
+#[test]
+fn the_enabled_state_round_trips() {
+    use lexiswitch_core::config::rewrite_setting;
+    let written = rewrite_setting("[logging]\nenabled = true\n", "general", "enabled", "false");
+    let reloaded = lexiswitch_core::config::Config::parse(&written).expect("must reload");
+    assert!(!reloaded.general.enabled, "{written}");
+    // `logging.enabled` has the same key name in a different table and must be untouched.
+    assert!(reloaded.logging.enabled, "the wrong table was edited: {written}");
+
+    let back = rewrite_setting(&written, "general", "enabled", "true");
+    assert!(lexiswitch_core::config::Config::parse(&back).unwrap().general.enabled);
+}
+
+/// Task 4.4: an invalid configuration is rejected outright, so a caller holding a previous one
+/// keeps it. Nothing partial is ever handed back.
+#[test]
+fn an_invalid_configuration_is_refused_whole() {
+    // Valid TOML, invalid setting: the binding cannot be empty.
+    let bad = "[hotkeys]\nconvert_selection = \"\"\n[logging]\nenabled = true\n";
+    let err = lexiswitch_core::config::Config::parse(bad).expect_err("must be refused");
+    assert!(err.line().is_some(), "an error without a location: {err}");
+
+    // Not TOML at all.
+    assert!(lexiswitch_core::config::Config::parse("[hotkeys\nbroken").is_err());
+}

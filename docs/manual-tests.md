@@ -764,3 +764,51 @@ did not get it. Extracting `winui` moved the *foreground handling* into shared c
 
 Both windows now arm only after the foreground has settled, and both confirm against
 `GetForegroundWindow` rather than trusting the message.
+
+---
+
+## Shell and shortcut verification (2026-08-07)
+
+Against the release build unless noted. The agent's own log is quoted because it is the only
+channel that reports outcomes reliably — balloons have been observed not displaying at all on
+this machine.
+
+| what | result |
+|---|---|
+| Startup with the shortcut held by another application | Keeps running. `hotkey_conflict: … Hot key is already registered.` Tray icon present and receiving shell messages. Previously exited with code 1 and no icon. |
+| Convert from the tray while the shortcut is held | Works. `selection_requested` then `outcome_applied`; document converted. |
+| Record a replacement shortcut | Works. `shortcut_changed`, written to the configuration file, `config_reloaded`, then converted with the new combination. No restart. |
+| Conflict clears when the shortcut is released | Works. Holder stopped, tray touched, `hotkey_conflict_cleared`, then converted on the recovered shortcut. |
+| Configuration reload applying a valid change | Works, as part of the recording flow above. |
+| Release build, not only debug | The compatibility matrix runs against the release binary. |
+
+**Not executed, and why.** Starting with one keyboard layout installed, and becoming usable when
+a second appears, would both mean changing the user's Windows keyboard configuration. The logic
+is unit-tested and the recovery path is the same re-check that clears a shortcut conflict, which
+is verified; what is untested is the real startup and the real transition.
+
+**Not yet executed**: reload rejecting an invalid file end to end (covered at unit level), and a
+rebind that fails after a previous one succeeded.
+
+## The layout switch is advisory, and occasionally declined
+
+Chrome's apply-and-switch row failed once in a full matrix run — the text converted and the
+layout stayed `en-US` — then passed three times out of three when run on its own.
+
+Consistent with what the request is. `WM_INPUTLANGCHANGEREQUEST` is posted, an application may
+ignore it, and there is no return value that says it did; the outcome deliberately says
+"requested" rather than "switched". Recorded rather than chased: an intermittent decline is the
+documented behaviour of the mechanism, not a defect in the caller.
+
+## Two harness faults that read as product failures
+
+A matrix run reported 19 of 26, with all five Notepad rows saying "target unavailable" — while
+Notepad was running with a window the whole time. The harness could not take the foreground and
+reported that with the same message it uses for a missing window, so the cause was invisible.
+
+Both are fixed: the two conditions now report differently, and the focus routine minimises a
+window that will not yield after a few polite attempts, which is the only thing observed to
+move one. The same run's remaining failures were the cascade from typing into nothing.
+
+Worth keeping in mind when reading a red cell: this harness has now produced more false
+failures than true ones.

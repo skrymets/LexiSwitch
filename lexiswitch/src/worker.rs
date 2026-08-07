@@ -38,6 +38,8 @@ pub enum Job {
         /// It is never allowed to choose a source.
         active: Option<String>,
         allow_clipboard: bool,
+        /// How many lines the chooser's expanded view shows, from configuration.
+        expanded_lines: i32,
     },
     /// Finish and let the thread exit.
     Stop,
@@ -115,6 +117,7 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                 handles,
                 active,
                 allow_clipboard,
+                expanded_lines,
             } => {
                 // No owner window: the worker owns none, and the clipboard does not need one.
                 let owner = windows::Win32::Foundation::HWND(std::ptr::null_mut());
@@ -141,7 +144,12 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                         // which is why it runs here and not on the message loop: the tray has
                         // to stay alive while a chooser is open.
                         let empty = found.is_empty();
-                        match chooser::show(transaction.original(), &found, active.as_deref()) {
+                        match chooser::show(
+                            transaction.original(),
+                            &found,
+                            active.as_deref(),
+                            expanded_lines,
+                        ) {
                             Err(e) => {
                                 // The window could not take the foreground, so it could never
                                 // have been typed into. Nothing was modified.

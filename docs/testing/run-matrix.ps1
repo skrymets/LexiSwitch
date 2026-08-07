@@ -101,16 +101,26 @@ function Chord([byte]$vk, [int]$ms = 450) {
 }
 
 function Focus-Window([IntPtr]$h) {
-    for ($i = 0; $i -lt 6; $i++) {
+    for ($i = 0; $i -lt 8; $i++) {
         [void][LX.W]::ShowWindow($h, 9)                     # SW_RESTORE
         Start-Sleep -Milliseconds 300
-        $t = [LX.W]::GetWindowThreadProcessId([LX.W]::GetForegroundWindow(), [IntPtr]::Zero)
+        $fg = [LX.W]::GetForegroundWindow()
+        $t = [LX.W]::GetWindowThreadProcessId($fg, [IntPtr]::Zero)
         $o = [LX.W]::GetCurrentThreadId()
         [void][LX.W]::AttachThreadInput($o, $t, $true)
         [void][LX.W]::SetForegroundWindow($h)
         [void][LX.W]::AttachThreadInput($o, $t, $false)
         Start-Sleep -Milliseconds 500
         if ([LX.W]::GetForegroundWindow() -eq $h) { return $true }
+
+        # Some windows will not yield the foreground however politely they are asked; the only
+        # thing that reliably moves them is getting them out of the way. Observed with Notepad
+        # refusing to hand over to Notepad++, and it is what turned five Notepad rows of a
+        # matrix run into "target unavailable" when Notepad was running the whole time.
+        if ($i -ge 2 -and $fg -ne $h -and $fg -ne [IntPtr]::Zero) {
+            [void][LX.W]::ShowWindow($fg, 6)                # SW_MINIMIZE
+            Start-Sleep -Milliseconds 400
+        }
     }
     return $false
 }
@@ -149,19 +159,31 @@ function Read-Field {
 function Open-Target([string]$app, [string]$page = $PAGE) {
     switch ($app) {
         'Notepad' {
+            # Modern Notepad hands a launch off to an existing instance and the process that was
+            # started can exit without ever owning a window, so this polls for a window rather
+            # than trusting the spawn. Getting this wrong reports every Notepad row as "target
+            # unavailable", which reads like five product failures and is none.
             $p = Get-Process Notepad -ErrorAction SilentlyContinue |
                  Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-            if (-not $p) { Start-Process 'notepad.exe'; Start-Sleep -Seconds 3
-                $p = Get-Process Notepad | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1 }
-            if (-not (Focus-Window $p.MainWindowHandle)) { return $null }
+            if (-not $p) {
+                Start-Process 'notepad.exe'
+                for ($i = 0; $i -lt 30; $i++) {
+                    Start-Sleep -Milliseconds 500
+                    $p = Get-Process Notepad -ErrorAction SilentlyContinue |
+                         Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+                    if ($p) { break }
+                }
+            }
+            if (-not $p) { return 'no window' }
+            if (-not (Focus-Window $p.MainWindowHandle)) { return 'could not focus' }
             Chord 0x4E 1000                                  # Ctrl+N: a fresh tab
             return $p.MainWindowHandle
         }
         'Notepad++' {
             $p = Get-Process notepad++ -ErrorAction SilentlyContinue |
                  Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-            if (-not $p) { return $null }
-            if (-not (Focus-Window $p.MainWindowHandle)) { return $null }
+            if (-not $p) { return 'no window' }
+            if (-not (Focus-Window $p.MainWindowHandle)) { return 'could not focus' }
             Chord 0x4E 1000
             return $p.MainWindowHandle
         }
@@ -180,8 +202,8 @@ function Open-Target([string]$app, [string]$page = $PAGE) {
                 $hits = Find-Windows @('matrix target', (Browser-Needle $app))
                 if ($hits.Count -gt 0) { $h = $hits[0]; break }
             }
-            if ($h -eq [IntPtr]::Zero) { return $null }
-            if (-not (Focus-Window $h)) { return $null }
+            if ($h -eq [IntPtr]::Zero) { return 'no window' }
+            if (-not (Focus-Window $h)) { return 'could not focus' }
             Start-Sleep -Seconds 2      # let autofocus land in the textarea
             return $h
         }
@@ -275,6 +297,7 @@ function Run-Case([string]$app, [string]$scenario) {
         return [pscustomobject]$row
     }
     $h = Open-Target $app $(if ($readOnly) { $PAGE_RO } else { $PAGE })
+    if ($h -is [string]) { $row.Note = "target unavailable: $h"; return [pscustomobject]$row }
     if (-not $h) { $row.Note = 'target unavailable'; return [pscustomobject]$row }
 
     if (-not (Set-Layout 'en-US')) { $row.Note = 'could not set en-US'; return [pscustomobject]$row }

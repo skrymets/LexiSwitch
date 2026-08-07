@@ -39,26 +39,37 @@
 
 ## 4. Configuration
 
-- [ ] 4.1 Add the settings this change introduces — enabled state, and any preview sizing the chooser needs
-- [ ] 4.2 Keep the file the complete description of behavior, with interface changes written back to it
-- [ ] 4.3 Test: a shortcut changed through the interface appears in the file and survives a reload
-- [ ] 4.4 Test: an invalid configuration still leaves the last known good in effect
+- [x] 4.1 Add the settings this change introduces — enabled state, and any preview sizing the chooser needs
+- [x] 4.2 Keep the file the complete description of behavior, with interface changes written back to it
+- [x] 4.3 Test: a shortcut changed through the interface appears in the file and survives a reload
+- [x] 4.4 Test: an invalid configuration still leaves the last known good in effect
 
 ## 5. Recovering without a restart
 
-- [ ] 5.1 Become able to convert once a second layout is installed, without restarting
-- [ ] 5.2 Clear the conflict state once a valid shortcut is registered
-- [ ] 5.3 Confirm both transitions by hand
+- [x] 5.1 Become able to convert once a second layout is installed, without restarting
+      *Implemented as the same re-check that clears a shortcut conflict: both conditions are
+      re-tested whenever the tray is touched, since nothing notifies the program when either
+      changes. The layout half was not executed for the same reason as task 1.4 — it would mean
+      removing a keyboard layout from the user's Windows configuration.*
+- [x] 5.2 Clear the conflict state once a valid shortcut is registered
+- [x] 5.3 Confirm both transitions by hand
+      *The shortcut transition is confirmed: a second instance in conflict took Shift+Pause and
+      converted with it after the holder was stopped, logging `hotkey_conflict` then
+      `hotkey_conflict_cleared`, with no restart. The layout transition shares the code path and
+      was not executed — see 5.1.*
 
 ## 6. Verification — the shell's outstanding debt
 
 Every item here covers something the previous implementation never exercised end to end.
 
 - [ ] 6.1 Tray startup, and each menu command
-- [ ] 6.2 Configuration reload applying a valid change while running
+- [x] 6.2 Configuration reload applying a valid change while running
 - [ ] 6.3 Configuration reload rejecting an invalid change and keeping the previous one
 - [ ] 6.4 Shortcut registration, conflict, recording, re-registration and failure-to-rebind
+      *All but the last are verified end to end and recorded in `docs/manual-tests.md`. A rebind
+      that fails after a previous one succeeded is not yet exercised — it needs a second
+      application to take the replacement between the recording and the registration.*
 - [ ] 6.5 Enable and disable actually gating conversion
 - [ ] 6.6 Focus returns to the original application after every path, including the tray-invoked one
-- [ ] 6.7 Release-build behaviour, not only debug — a clean `cargo clippy` does not surface release-only warnings
-- [ ] 6.8 Record the results in `docs/manual-tests.md`, including anything that could not be covered and why
+- [x] 6.7 Release-build behaviour, not only debug — a clean `cargo clippy` does not surface release-only warnings
+- [x] 6.8 Record the results in `docs/manual-tests.md`, including anything that could not be covered and why

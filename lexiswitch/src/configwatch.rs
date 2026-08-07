@@ -24,9 +24,12 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 /// Outcome of an attempt to load configuration.
+///
+/// The success case is boxed because it is much larger than the other two, and this value is
+/// returned by every load — including the two-second poll that usually finds nothing changed.
 pub enum Loaded {
     /// Parsed and validated.
-    Ok(Config),
+    Ok(Box<Config>),
     /// No file. Defaults are used, which is not an error — the example file documents them.
     Missing,
     /// The file exists but could not be used. The previous configuration stays in effect.
@@ -41,7 +44,7 @@ pub fn load(path: &Path) -> Loaded {
         Err(e) => return Loaded::Invalid(format!("{}: {e}", path.display())),
     };
     match Config::parse(&text) {
-        Ok(config) => Loaded::Ok(config),
+        Ok(config) => Loaded::Ok(Box::new(config)),
         Err(e) => Loaded::Invalid(e.to_string()),
     }
 }

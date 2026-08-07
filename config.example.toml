@@ -13,6 +13,11 @@
 # starting after an upgrade, and dropping them silently would make a removed setting
 # indistinguishable from one you misspelled.
 
+[general]
+# Whether the shortcut converts. The tray's Enable/Disable writes this back here, so the
+# choice survives a restart — which is why it is a setting rather than only a menu item.
+enabled = true
+
 [hotkeys]
 # Bindings are "Modifier+Modifier+Key". Recognised modifiers: Ctrl, Alt, Shift, Win.
 #
@@ -46,6 +51,12 @@ candidates = []
 # character. Text LexiSwitch puts there is marked to stay out of Clipboard History, which
 # compliant clipboard managers honour — see docs/adr/0010-paste-selection-replacement.md.
 allow_clipboard_fallback = true
+
+[chooser]
+# How many lines of a long candidate the expanded view shows before it scrolls. Held between
+# 3 and 40 whatever is written here: below that there is no room for the text the expanded
+# view exists to show, and above it the window would be taller than the screen.
+expanded_lines = 10
 
 [logging]
 # Off by default. When enabled, records event kinds and lengths only — "converted_word

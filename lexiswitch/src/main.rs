@@ -49,7 +49,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let config_path = configwatch::default_path();
     let mut config = match &config_path {
         Some(path) => match configwatch::load(path) {
-            Loaded::Ok(config) => config,
+            Loaded::Ok(config) => *config,
             Loaded::Missing => Config::default(),
             Loaded::Invalid(why) => {
                 // Startup with a broken file uses defaults rather than refusing to run, and
@@ -79,7 +79,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // code and no tray icon, which is indistinguishable from the program being broken. Both
     // are recoverable without a restart, and neither can be acted on by someone who was never
     // told about it.
-    let (layouts, layout_count) = match layouts::build_all() {
+    let (mut layouts, mut layout_count) = match layouts::build_all() {
         Ok(built) => {
             let n = built.len();
             log.note(&format!("layouts_built count={n}"));
@@ -112,7 +112,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let mut enabled = true;
+    let mut enabled = config.general.enabled;
     let mut state = AgentState::resolve(
         layout_count,
         shortcut.clone(),
@@ -165,6 +165,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             if w.changed() {
                 match configwatch::load(w.path()) {
                     Loaded::Ok(new) => {
+                        let new = *new;
                         // Swapped wholesale: nothing reads half-old, half-new state.
                         let rebind = new.hotkeys != config.hotkeys;
                         config = new;
@@ -241,6 +242,37 @@ fn run() -> Result<(), Box<dyn Error>> {
             WM_TRAY => {
                 let click = tray_event(msg.lParam.0);
                 log.note(&format!("tray_message event=0x{click:04X}"));
+
+                // Recover from the two conditions that are outside this program's control, by
+                // re-checking them rather than requiring a restart. Both are cheap and both are
+                // only interesting while they hold: a layout can be installed and a shortcut
+                // can be released by whatever was holding it, and in neither case does anything
+                // notify us.
+                if layout_count < 2 {
+                    if let Ok(built) = layouts::build_all() {
+                        log.note(&format!("layouts_appeared count={}", built.len()));
+                        layout_count = built.len();
+                        layouts = built;
+                    }
+                }
+                if matches!(shortcut, Shortcut::Conflict(_)) {
+                    if let Ok(registered) = register_hotkeys(&window, &config) {
+                        log.note("hotkey_conflict_cleared");
+                        hotkeys = Some(registered);
+                        shortcut = Shortcut::Registered(config.hotkeys.convert_selection.clone());
+                    }
+                }
+                let refreshed = AgentState::resolve(
+                    layout_count,
+                    shortcut.clone(),
+                    enabled,
+                    runtime_error.clone(),
+                );
+                if refreshed != state {
+                    state = refreshed;
+                    tray.set_state(&state);
+                    tray.notify(&state.summary(), &state.explanation());
+                }
                 // WM_CONTEXTMENU as well as WM_RBUTTONUP: which one the shell sends depends on
                 // the notify-icon protocol version, and accepting both costs nothing.
                 if click == WM_RBUTTONUP || click == WM_CONTEXTMENU {
@@ -257,6 +289,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             match command {
                 MenuCommand::EnableDisable => {
                     enabled = !enabled;
+                    // Written back, so the choice survives a restart. The file is the complete
+                    // description of behaviour; a setting changed through the interface that
+                    // did not appear there would be undone by the next reload.
+                    if let Err(e) = persist_setting(&config_path, "general", "enabled",
+                                                    if enabled { "true" } else { "false" }) {
+                        log.note(&format!("enabled_not_saved: {e}"));
+                    }
+                    config.general.enabled = enabled;
                     state = AgentState::resolve(
                         layout_count,
                         shortcut.clone(),
@@ -279,7 +319,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 MenuCommand::ReloadConfig => match config_path.as_deref() {
                     Some(path) => match configwatch::load(path) {
                         Loaded::Ok(new) => {
-                            config = new;
+                            config = *new;
                             log.set_enabled(config.logging.enabled);
                             tray.notify("Configuration reloaded", "Settings applied.");
                         }
@@ -372,6 +412,7 @@ fn request_conversion(
             .collect(),
         active,
         allow_clipboard: config.selection.allow_clipboard_fallback,
+        expanded_lines: config.chooser.expanded_lines(),
     });
 }
 
@@ -446,6 +487,24 @@ fn change_shortcut(
             }
         }
     }
+}
+
+/// Write one setting into the configuration file, leaving the rest of it alone.
+fn persist_setting(
+    config_path: &Option<std::path::PathBuf>,
+    table: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    let Some(path) = config_path else {
+        return Err("APPDATA is not set, so there is nowhere to save it".into());
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = lexiswitch_core::config::rewrite_setting(&existing, table, key, value);
+    std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
 /// Write the shortcut into the configuration file, leaving the rest of it alone.

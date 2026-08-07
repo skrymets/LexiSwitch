@@ -60,7 +60,8 @@ use crate::WinError;
 
 const CLASS_NAME: PCWSTR = w!("LexiSwitchChooser");
 
-/// How many wrapped lines the expanded view shows before it has to scroll.
+/// How many wrapped lines the expanded view shows before it has to scroll, when the caller
+/// expresses no preference.
 const EXPANDED_LINES: i32 = 10;
 
 /// Virtual-key codes, as plain integers because that is what `WM_KEYDOWN` delivers.
@@ -129,6 +130,8 @@ struct Chooser<'a> {
     /// Approximate pixel width of one character, for turning a pixel width into the character
     /// count [`compact`] works in.
     char_width: i32,
+    /// How many wrapped lines the expanded view shows, from configuration.
+    expanded_lines: i32,
     scale: i32,
 }
 
@@ -146,6 +149,7 @@ pub fn show(
     original: &str,
     candidates: &[Candidate],
     active: Option<&str>,
+    expanded_lines: i32,
 ) -> Result<Decision, WinError> {
 
     // SAFETY: the class name is a static wide string with a NUL and the WNDCLASSW is fully
@@ -186,6 +190,11 @@ pub fn show(
         line_height,
         text_line,
         char_width,
+        expanded_lines: if expanded_lines > 0 {
+            expanded_lines
+        } else {
+            EXPANDED_LINES
+        },
         scale,
     };
 
@@ -321,7 +330,7 @@ impl Chooser<'_> {
             // The candidate's own heading, room for a useful number of wrapped lines, and the
             // scroll position. Without this the window kept its list height and "expanded"
             // showed a single line, which is not an expansion of anything.
-            line + EXPANDED_LINES * self.text_line + line
+            line + self.expanded_lines * self.text_line + line
         } else {
             // One line either way: with no candidates that line carries the explanation.
             (self.candidates.len() as i32).max(2) * line

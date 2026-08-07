@@ -143,7 +143,7 @@ fn main() {
         say!("  drive it yourself: arrows, Space, Enter, Ctrl+Enter, Esc");
     }
 
-    match chooser::show(&source, &found, Some("en-US")) {
+    match chooser::show(&source, &found, Some("en-US"), 10) {
         Ok(decision) => {
             say!();
             say!("  decision: {decision:?}");

@@ -173,7 +173,7 @@ fn main() {
     }
 
     say!("  opening the chooser — leave the mouse and keyboard alone");
-    let decision = chooser::show(transaction.original(), &found, Some("en-US"));
+    let decision = chooser::show(transaction.original(), &found, Some("en-US"), 10);
 
     if hold_shift {
         send(&[key(VK_SHIFT, true)]);

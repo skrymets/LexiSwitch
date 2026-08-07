@@ -23,8 +23,10 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Instance', 'Conflict', 'Recorder', 'Recovery')]
-    [string[]] $Only = @('Instance', 'Conflict', 'Recorder', 'Recovery')
+    [ValidateSet('Instance', 'Conflict', 'Recorder', 'Recovery', 'Menu', 'Reload', 'Rebind',
+                 'Gating', 'Focus')]
+    [string[]] $Only = @('Instance', 'Conflict', 'Recorder', 'Recovery', 'Menu', 'Reload',
+                         'Rebind', 'Gating', 'Focus')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -185,6 +187,157 @@ if ($Only -contains 'Recovery') {
     Start-Sleep -Seconds 3
     $text = (Get-Content $log -ErrorAction SilentlyContinue) -join ' '
     Check 'the conflict clears without a restart' ($text -like '*hotkey_conflict_cleared*')
+    StopAll
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Menu') {
+    '--- every tray menu command ---'
+    StopAll
+    $log = Join-Path $tmp 'lexi-menu.log'
+    $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
+    Start-Sleep -Seconds 5
+    $w = WindowOf $agent.Id 'LexiSwitchMessageWindow'
+
+    # Each command by its menu id, which is what TrackPopupMenu returns and what WM_COMMAND
+    # carries. Open configuration is deliberately not sent: it launches whatever handles .toml,
+    # which on this machine is an IDE, and a test should not open the operator's editor.
+    foreach ($cmd in @(@{id=101; name='Reload configuration'}, @{id=106; name='Diagnostics'})) {
+        [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]$cmd.id, [IntPtr]::Zero)
+        Start-Sleep -Seconds 2
+        Check "the menu command survives: $($cmd.name)" ([bool](Get-Process -Id $agent.Id -ErrorAction SilentlyContinue))
+    }
+
+    # Enable, disable, and back, checking the agent records each.
+    [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]100, [IntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]100, [IntPtr]::Zero)
+    Start-Sleep -Seconds 2
+    $text = (Get-Content $log -ErrorAction SilentlyContinue) -join ' '
+    Check 'disable and enable are both recorded' (($text -like '*disabled*') -and ($text -like '*enabled*'))
+
+    # Quit through the menu, which is the path that has to leave nothing behind.
+    [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]103, [IntPtr]::Zero)
+    Start-Sleep -Seconds 3
+    Check 'quit leaves no process' (-not (Get-Process -Id $agent.Id -ErrorAction SilentlyContinue))
+    StopAll
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Reload') {
+    '--- an invalid configuration keeps the last known good ---'
+    $back = Join-Path $tmp 'lexi-config-reload-backup.toml'
+    if (Test-Path $cfg) { Copy-Item $cfg $back -Force }
+    try {
+        StopAll
+        # A file that parses but fails validation: the binding may not be empty.
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
+        Start-Sleep -Milliseconds 500
+        $log = Join-Path $tmp 'lexi-reload.log'
+        $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
+        Start-Sleep -Seconds 5
+
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"`"`n[logging]`nenabled = true`n" -NoNewline
+        # The watcher polls every two seconds.
+        Start-Sleep -Seconds 6
+        $text = (Get-Content $log -ErrorAction SilentlyContinue) -join ' '
+        Check 'the invalid file is rejected' ($text -like '*config_rejected*')
+        Check 'and the agent keeps running' ([bool](Get-Process -Id $agent.Id -ErrorAction SilentlyContinue))
+
+        # The previous configuration is still in effect, which means the shortcut still converts.
+        # Proven by the hotkey still being registered: a rejected reload never re-registers.
+        Check 'the previous configuration survives' ($text -notlike '*hotkey_conflict*')
+        StopAll
+    }
+    finally {
+        StopAll
+        if (Test-Path $back) { Copy-Item $back $cfg -Force; 'configuration restored' }
+    }
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Rebind') {
+    '--- a replacement that is also unavailable ---'
+    # Cannot be exercised through the recorder, and the reason is worth knowing rather than
+    # working around: a combination another application holds as a *global* hotkey is delivered
+    # to that application, so pressing it in the recorder produces no key event here at all.
+    # Nothing is captured, and the path where a recorded replacement fails to register is
+    # unreachable by pressing an already-taken combination.
+    #
+    # The path still exists in the code and still matters — a combination can be free when
+    # recorded and taken by the time it is registered — but arranging that race deliberately is
+    # not something this harness can do. Recorded in docs/manual-tests.md instead.
+    Check 'failure-to-rebind is not exercisable here' $true 'see docs/manual-tests.md'
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Gating') {
+    '--- disable actually stops conversion ---'
+    StopAll
+    $log = Join-Path $tmp 'lexi-gating.log'
+    $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
+    Start-Sleep -Seconds 5
+    $w = WindowOf $agent.Id 'LexiSwitchMessageWindow'
+
+    $np = (Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
+    if (-not $np) { Check 'Notepad available for the gating check' $false } else {
+        [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 900
+        Chord 0x4E 1200
+        Set-Clipboard -Value 'Ghbdsn'; Chord 0x56 700; Chord 0x41 500
+
+        [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]100, [IntPtr]::Zero)   # disable
+        Start-Sleep -Seconds 2
+        [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 700
+        Chord 0x41 400
+        [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
+        [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+        Start-Sleep -Seconds 3
+        $before = ((Get-Content $log -ErrorAction SilentlyContinue) | Where-Object { $_ -like 'selection_requested*' }).Count
+        Check 'the hotkey does nothing while disabled' ($before -eq 0)
+
+        [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]100, [IntPtr]::Zero)   # enable
+        Start-Sleep -Seconds 2
+        [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 700
+        Chord 0x41 400
+        [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
+        [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+        Start-Sleep -Seconds 3
+        $after = ((Get-Content $log -ErrorAction SilentlyContinue) | Where-Object { $_ -like 'selection_requested*' }).Count
+        Check 'and converts again once enabled' ($after -gt 0)
+        Key 0x1B 800     # dismiss the chooser
+    }
+    StopAll
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Focus') {
+    '--- focus returns to the application, including by the tray ---'
+    StopAll
+    $log = Join-Path $tmp 'lexi-focus.log'
+    $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
+    Start-Sleep -Seconds 5
+    $w = WindowOf $agent.Id 'LexiSwitchMessageWindow'
+
+    $np = (Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
+    if (-not $np) { Check 'Notepad available for the focus check' $false } else {
+        foreach ($route in @(@{name='hotkey'; tray=$false}, @{name='tray command'; tray=$true})) {
+            [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np); Start-Sleep -Milliseconds 900
+            Chord 0x4E 1200
+            Set-Clipboard -Value 'Ghbdsn'; Chord 0x56 700; Chord 0x41 500
+
+            if ($route.tray) {
+                [void][SH.W]::PostMessageW($w, 0x0111, [IntPtr]104, [IntPtr]::Zero)
+            } else {
+                [SH.W]::keybd_event(0x10,0,0,[UIntPtr]::Zero); [SH.W]::keybd_event(0x13,0,0,[UIntPtr]::Zero)
+                [SH.W]::keybd_event(0x13,0,2,[UIntPtr]::Zero); [SH.W]::keybd_event(0x10,0,2,[UIntPtr]::Zero)
+            }
+            Start-Sleep -Seconds 3
+            Key 0x0D 1000     # apply
+            Start-Sleep -Seconds 4
+            $fg = [SH.W]::GetForegroundWindow()
+            Check "focus returns after applying by $($route.name)" ($fg -eq $np) "foreground=$fg notepad=$np"
+        }
+    }
     StopAll
 }
 

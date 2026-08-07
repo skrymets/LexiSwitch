@@ -165,6 +165,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (work, outcomes) = Worker::spawn(window.waker());
     let mut watcher = config_path.clone().map(ConfigWatcher::new);
 
+    // A heartbeat, so the configuration file is actually polled. The poll lives in the handler
+    // below, and the handler only runs when a message arrives — an idle agent gets none, so
+    // without this an edit to the file is noticed only when something else happens to wake the
+    // loop. Two seconds is the interval the file watching was always documented as having.
+    if !window.start_tick(std::time::Duration::from_secs(2)) {
+        log.note("tick_not_started");
+    }
+
     window.run(|msg| {
         // Anything the worker finished gets reported here, on the thread that owns the tray.
         while let Ok(outcome) = outcomes.try_recv() {

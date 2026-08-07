@@ -20,7 +20,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
-    InSendMessage,
+    InSendMessage, SetTimer,
     PostMessageW, PostQuitMessage, RegisterClassW, MSG, WM_APP, WM_DESTROY, WNDCLASSW,
     WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -154,6 +154,29 @@ impl MessageWindow {
 
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// Wake the loop on a fixed interval, whether or not anything else happens.
+    ///
+    /// The loop blocks in `GetMessageW`, and work that has to happen periodically — noticing
+    /// that the configuration file changed — runs in the handler, which only executes when a
+    /// message arrives. An idle agent receives none, so an edit to the file was never picked up
+    /// until something unrelated woke the loop: a tray hover, a hotkey, anything at all. On a
+    /// machine the user was not touching, hot reload simply did not happen.
+    ///
+    /// While Raw Input was registered this was invisible, because every keystroke anywhere
+    /// delivered `WM_INPUT` and pumped the loop continuously. Removing observation removed the
+    /// accidental heartbeat along with it — the same way it removed outcome reporting, which
+    /// needed [`Waker`] for the same reason.
+    ///
+    /// Returns whether the timer was created. A failure means periodic work stops happening,
+    /// which is worth reporting rather than silently living without.
+    pub fn start_tick(&self, every: std::time::Duration) -> bool {
+        const TICK: usize = 1;
+        // SAFETY: `hwnd` is a live window owned by this thread. A null callback asks for
+        // `WM_TIMER` to be posted to the window instead, which is what the loop wants — it needs
+        // only to be woken, and does its work in the handler. A zero return is failure.
+        unsafe { SetTimer(Some(self.hwnd), TICK, every.as_millis() as u32, None) != 0 }
     }
 
     /// A handle another thread can use to wake this loop.

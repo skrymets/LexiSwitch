@@ -911,3 +911,61 @@ to 4 in 4, and the full matrix to 24 of 24.
 This is the third harness fault in a row that presented as a product failure. The count is worth
 keeping honest: a red cell in this matrix is a question, and more often than not the answer has
 been about the harness or the machine rather than the program.
+
+---
+
+## A globally held combination cannot be typed into the recorder (2026-08-07)
+
+Trying to verify what happens when a recorded replacement *also* fails to register, by having
+another application hold `Ctrl+Alt+K` and then recording `Ctrl+Alt+K`, produced nothing: the
+recorder captured no combination at all and the log showed only that the recording was
+cancelled.
+
+The reason is how global hotkeys work. `RegisterHotKey` means the combination is delivered to
+the registering application and to nobody else, so pressing it while the recorder has focus
+sends no key event to the recorder. There is nothing to capture.
+
+Two consequences, and the first is a benefit.
+
+**An unavailable combination cannot usually be recorded in the first place.** The user presses
+it, nothing appears, and they try another. The failure they would otherwise have hit — record
+it, watch it be refused, try again — mostly cannot arise.
+
+**But the silence is unexplained.** From the user's side, a key combination that another
+application holds simply does nothing in the recorder, with no indication why. That is a real
+rough edge. It is not a defect in the recording path; it is the operating system doing exactly
+what the shortcut was registered for. Left as it is for now, and recorded so it is not
+rediscovered as a mystery.
+
+**The failure-to-rebind path is still reachable in principle** — a combination can be free when
+recorded and taken by the time registration is attempted — and the code handles it: the previous
+shortcut is re-registered and the recorder reopens with the reason. Arranging that race
+deliberately is beyond this harness, so that branch is covered by reading rather than by test,
+and this is the note saying so.
+
+---
+
+## Hot reload never happened on an idle agent (2026-08-07)
+
+Testing that an invalid configuration keeps the last known good produced nothing at all: the
+agent's log showed the file being read once at startup and never again. Not a rejection, not a
+reload — no attempt.
+
+The configuration poll runs in the message-loop handler, and the handler only executes when a
+message arrives. `GetMessageW` blocks until one does. An agent nobody is touching receives none,
+so an edit to the configuration file was noticed only when something unrelated happened to wake
+the loop — a tray hover, a hotkey press, anything. On a machine the user was not interacting
+with, the documented "applies within about two seconds" did not happen at any point.
+
+**Invisible until the pivot removed Raw Input.** While keystrokes were observed, every key
+pressed anywhere delivered `WM_INPUT` and pumped the loop continuously, so the poll ran
+constantly by accident. Removing observation removed the heartbeat with it — exactly as it
+removed outcome reporting, which needed `Waker` for the same reason and was found the same way.
+This is the second thing that turned out to be running on borrowed messages.
+
+**Fixed** with a two-second `SetTimer` on the message window. The timer does nothing except
+arrive; waking the loop is the whole job, and the handler does the work as before.
+
+Found only because a test asserted on the agent's own log rather than on the outcome. Asserting
+"the previous configuration survives" would have passed — it did survive, because nothing ever
+tried to replace it.

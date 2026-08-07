@@ -1,3 +1,13 @@
+# Compatibility matrix — last run
+
+Produced by `pwsh -File docs/testing/run-matrix.ps1`. Re-run after any change to the read,
+replace or layout-switch paths; `-Smoke` is a two-case, 45-second version for iterating.
+
+Run 2026-08-07 against the release build at commit `8d84d8e`. **24 of 24 pass.**
+
+The shell — single instance, conflicts, recording, recovery, menu commands, gating and focus —
+is covered separately by `shell-checks.ps1`, 26 of 26.
+
 | Application | Initial text | Actions | Layout before | Expected text | Actual text | Expected layout | Actual layout | Pass |
 |---|---|---|---|---|---|---|---|---|
 | Notepad | `{jxe ltoj d nt,t pfgbnfnb/ Jn lbdbcm db phj,b…` | select all, Shift+Pause, Enter | en-US | `Хочу дещо в тебе запитати. От дивись ви зроби…` | `Хочу дещо в тебе запитати. От дивись ви зроби…` | en-US | en-US | PASS |

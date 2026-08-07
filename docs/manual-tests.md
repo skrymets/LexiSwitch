@@ -969,3 +969,63 @@ arrive; waking the loop is the whole job, and the handler does the work as befor
 Found only because a test asserted on the agent's own log rather than on the outcome. Asserting
 "the previous configuration survives" would have passed — it did survive, because nothing ever
 tried to replace it.
+
+## Case conversion: what was verified, and three harness faults on the way (2026-08-08)
+
+The case transaction (ADR-0014) landed with 200 core tests, 20 new shell checks, and a clean
+matrix. What is worth recording is not the passes but what the failures turned out to be.
+
+**Win+Ctrl+Pause registers.** The default binding for the second shortcut was the plan's
+riskiest assumption: Windows reserves Win-key combinations, and `Win+Pause` itself opens System
+properties. `probe_hold_hotkey` takes it without complaint, so the default ships working rather
+than shipping a conflict for the user to resolve.
+
+**Binary 0.63 MB → 0.74 MB.** The whole feature — two core modules, a third window — costs
+0.11 MB against a 5 MB budget.
+
+### The debug binary was stale, again
+
+The first Case run failed every window check, and the agent's log showed the command never
+arriving. The cause was a debug binary eleven minutes older than the release one: the last
+`cargo build -p lexiswitch` ran *before* the wiring edit, and `cargo clippy` produces no binary
+at all. This is the third time a stale build has presented as a broken feature in this project.
+`cargo test --workspace` does not help either — it builds test binaries, not the agent.
+
+### Three groups depended on a configuration nobody set
+
+Conflict, Recovery and Gating all hold or press `Shift+Pause`, and none of them said so. They
+passed for as long as the live configuration happened to hold the default. The moment it did
+not — the operator had rebound it to `Shift+Win+Pause`, and later a debugging run of mine
+persisted `Ctrl+Alt+K` — three checks failed for reasons that had nothing to do with the code.
+
+Both `shell-checks.ps1` and `run-matrix.ps1` now write a known configuration at the start and
+restore the operator's at the end. A red cell should mean the product.
+
+### Existing is not focused
+
+After the foreground handshake moved into `winui`, the recorder group failed to register a
+replacement while the recorder itself demonstrably opened. `Activation::present` retries
+`SetForegroundWindow` up to nine times, so a window is findable by `EnumWindows` for up to half
+a second before it can receive a key — and the harness typed as soon as it found one. The
+keystrokes went to whatever still had focus, which is indistinguishable from the feature being
+broken. Both window waits now wait for the foreground, not for existence.
+
+Reproducing the same steps by hand with a three-second settle worked first time, which is what
+identified it: the product was never wrong.
+
+### A case-insensitive test suite about case
+
+The first green Case run reported `got 'A B'` for a check written against `'a b'` — and passed.
+PowerShell's `-eq` is case-insensitive, so three checks in a suite whose entire subject is
+letter case could not fail. Now `-ceq`. The same run also showed the pair check had navigated to
+the wrong style, because it counted rows from the top of a list that grows as styles are
+promoted; it now discards the counts first so `Home` means the same thing every time.
+
+### Recorded, not fixed
+
+- **One intermittent.** "the document is untouched" failed once in five runs of the Case group
+  and has not recurred. No behaviour was changed between the failure and the passes — only
+  diagnostics were added — so it is an open intermittency in the harness, not something solved.
+- **Rendering is unverified by machine.** The group boundaries, the dimming of rows and toggles,
+  the expanded view and the footer are visual claims. They are in `docs/testing/manual-checklist.md`
+  for eyes rather than asserted here.

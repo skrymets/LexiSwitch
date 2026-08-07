@@ -119,3 +119,34 @@ Recorded in `docs/manual-tests.md` with the evidence:
 - One `Ctrl+Z` reverting a conversion; the prior clipboard restored on every path.
 - An hour idle: no leak, no outbound connection.
 - Enable/disable gating the hotkey — you confirmed this on 2026-08-07.
+
+---
+
+## Group D — the case window (added 2026-08-08)
+
+Everything here is a *rendering* claim. The behaviour behind each one is already asserted by
+`shell-checks.ps1 -Only Case`; what a script cannot say is whether it looks right. Open it with
+`Win+Ctrl+Pause` over a selection, or from the tray's **Change case…**.
+
+Use this text, which exercises every column at once:
+
+```
+hello,   World 42!  Bye.
+```
+
+| # | Do this | Expect | Saw |
+|---|---|---|-----|
+| D1 | Look at the list without pressing anything | Three groups separated by rules, in this order: the plain four (`As typed`, `Invert case`, `lowercase`, `UPPERCASE`), then the eight identifier styles, then `First word capitalized` and `Words Capitalized` | |
+| D2 | Look at rows whose result equals the original | Drawn dim, **still present and still selectable** — never removed | |
+| D3 | Look at the toggle strip | Three labelled rows: `Strip 1/2`, `Spaces 3/4`, `Lines 5/6`. The two pairs read as pairs | |
+| D4 | Press `3`, then `4` | The `3` box clears as `4` sets. They never both show `[x]` | |
+| D5 | Select `snake_case`, then look at toggles 3 and 4 | Dim — they cannot change what `snake_case` produces | |
+| D6 | Press `1` and watch every row, not just the selected one | Every preview updates at once, so the styles stay comparable | |
+| D7 | Select a long result and press `Space` | Expands, wraps, scrolls with `↑↓`, and shows `line n of m`; nothing is written | |
+| D8 | Read the footer | Every binding named: `↑↓`, `1-6`, `Space`, `Ctrl+R`, `Enter`, `Esc` | |
+| D9 | Set display scale to 150% and reopen | The whole list is reachable — either it all fits, or it scrolls and keeps the selected row visible. Nothing is cut off at the bottom | |
+| D10 | Apply a style three times, reopen | An `Often used` heading with that style on top; the full list below still holds it in its declared position | |
+
+**D9 is the one worth doing properly.** The window is sized to its content and then clamped to
+the work area, so at a large scale the clamp is what decides whether the last style is
+reachable. It is the only item here that could hide a real defect rather than an ugly one.

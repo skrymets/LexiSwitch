@@ -101,9 +101,15 @@ struct Chooser<'a> {
     /// First visible line of the expanded view.
     scroll: usize,
     decision: Option<Decision>,
-    /// Set once the window has been activated, so the initial transition to foreground is not
-    /// mistaken for the user clicking away.
-    activated: bool,
+    /// Whether losing activation should be treated as the user clicking away.
+    ///
+    /// Not armed until the window has actually settled in the foreground. Taking the foreground
+    /// from another process produces a burst of activate/deactivate/activate before anything
+    /// the user did: `ShowWindow` activates the window, handing the foreground across processes
+    /// deactivates it again, and only then does it come to the front for real. Arming on the
+    /// first activation read that transient as a click elsewhere and cancelled the transaction
+    /// before the modal loop had even started, which is what made the chooser flash and vanish.
+    armed: bool,
     font: HFONT,
     bold: HFONT,
     /// Pixel height of one line of text, measured from the font rather than assumed.
@@ -164,7 +170,7 @@ pub fn show(
         expanded: false,
         scroll: 0,
         decision: None,
-        activated: false,
+        armed: false,
         font,
         bold,
         line_height,
@@ -215,7 +221,10 @@ pub fn show(
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(60));
         }
-        if force_foreground(hwnd) {
+        let took = force_foreground(hwnd);
+        #[cfg(feature = "chooser-diag")]
+        eprintln!("[chooser] force_foreground attempt {attempt} -> {took}");
+        if took {
             foreground = true;
             break;
         }
@@ -229,6 +238,10 @@ pub fn show(
         }
         return Err(WinError::last("SetForegroundWindow"));
     }
+
+    // Only now is losing the foreground meaningful: everything before this point is the
+    // handoff settling, and reacting to it cancels a transaction the user never abandoned.
+    state.armed = true;
 
     // A modal loop of this window's own. It runs on the worker thread, so the main loop — and
     // with it the tray — keeps running while the chooser is open.
@@ -900,12 +913,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         // screen holding a transaction open. The first activation is skipped because taking
         // the foreground produces one before the user has done anything.
         WM_ACTIVATE => {
-            if (wp.0 & 0xFFFF) == WA_INACTIVE as usize {
-                if state.activated && state.decision.is_none() {
+            #[cfg(feature = "chooser-diag")]
+            eprintln!(
+                "[chooser] WM_ACTIVATE state=0x{:04X} other=0x{:X} armed={}",
+                wp.0 & 0xFFFF,
+                lp.0,
+                state.armed
+            );
+            if (wp.0 & 0xFFFF) == WA_INACTIVE as usize && state.armed && state.decision.is_none()
+            {
+                // Confirmed against the window manager rather than trusted from the message.
+                // A deactivation that leaves us still in front is a transient of the handoff,
+                // not a user walking away, and cancelling on it discards a live transaction.
+                // SAFETY: no preconditions.
+                let front = unsafe { GetForegroundWindow() };
+                if front != hwnd {
                     state.decision = Some(Decision::Cancel);
                 }
-            } else {
-                state.activated = true;
             }
             LRESULT(0)
         }

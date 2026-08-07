@@ -35,3 +35,8 @@ windows = { version = "0.62", features = [
     # struct and RegisterClassW behind this feature.
     "Win32_Graphics_Gdi",
 ] }
+
+[features]
+# Temporary window-message tracing for diagnosing activation loss. Off by default and
+# compiled out entirely, so the shipped build carries none of it.
+chooser-diag = []

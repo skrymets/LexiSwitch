@@ -208,3 +208,88 @@ fn locate(text: &str, section: &str, key: &str) -> Option<usize> {
     }
     None
 }
+
+/// Write `binding` into the `convert_selection` setting of a configuration file's text.
+///
+/// A surgical edit, not a round trip. Parsing the file and re-serialising it would produce a
+/// valid document and destroy everything about it that is the user's: their comments, their
+/// spacing, the order they chose to put things in. The file is the complete description of
+/// behaviour, so the interface has to write to it — and it is the user's file, so it has to
+/// write as little as possible.
+///
+/// Handles the three shapes the file can be in: the setting is present, the `[hotkeys]` table
+/// is present without it, or neither is. Line endings are taken from the file rather than
+/// assumed, because a Windows editor will have left CRLF and rewriting them would show up as a
+/// whole-file diff.
+///
+/// A commented-out setting is deliberately not treated as the setting. Editing it would leave
+/// the change invisible to the parser while looking correct in the editor.
+pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let setting = format!("convert_selection = \"{}\"", binding.replace('"', "\\\""));
+
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(str::to_string).collect();
+    let mut in_hotkeys = false;
+    let mut hotkeys_end: Option<usize> = None;
+    let mut seen_hotkeys = false;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            // Leaving `[hotkeys]`: this is where the setting goes if it was never in it.
+            if in_hotkeys {
+                hotkeys_end = Some(i);
+            }
+            in_hotkeys = trimmed.starts_with("[hotkeys]");
+            seen_hotkeys |= in_hotkeys;
+            continue;
+        }
+        if !in_hotkeys || trimmed.starts_with('#') {
+            continue;
+        }
+        // The key, with whatever spacing surrounds it before the `=`.
+        let Some((key, _)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "convert_selection" {
+            continue;
+        }
+        // Keep any trailing comment: it is the user's note about this very setting.
+        let comment = line
+            .find('#')
+            .map(|at| format!(" {}", line[at..].trim_end_matches(['\r', '\n'])))
+            .unwrap_or_default();
+        let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+        lines[i] = format!("{indent}{setting}{comment}{newline}");
+        return lines.concat();
+    }
+
+    // Not found. Either the table exists and the setting does not, or neither does.
+    let mut out = lines.concat();
+    match hotkeys_end.or(if in_hotkeys { Some(lines.len()) } else { None }) {
+        Some(at) => {
+            lines.insert(at, format!("{setting}{newline}"));
+            lines.concat()
+        }
+        None => {
+            debug_assert!(!seen_hotkeys, "the table was found but not its extent");
+            // Exactly one blank line before the new table, however the file happened to end.
+            // The user reads this file; how theirs was terminated should not change how ours
+            // looks.
+            if !out.is_empty() {
+                // Counted, not matched. A file can end with a blank line and still not end with
+                // the two-newline sequence being looked for, because line endings are not
+                // necessarily uniform: the real configuration file on the development machine
+                // ends `\n\r\n`, so a byte comparison against `\r\n\r\n` missed it and added a
+                // second blank line every time it was rewritten.
+                let content = out.trim_end_matches(['\r', '\n']);
+                let breaks = out[content.len()..].matches('\n').count();
+                for _ in breaks..2 {
+                    out.push_str(newline);
+                }
+            }
+            out.push_str(&format!("[hotkeys]{newline}{setting}{newline}"));
+            out
+        }
+    }
+}

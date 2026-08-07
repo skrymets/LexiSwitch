@@ -37,29 +37,25 @@ use lexiswitch_core::preview::compact;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    GetDC, GetDeviceCaps, GetMonitorInfoW, GetSysColor, GetTextMetricsW, IntersectClipRect,
-    InvalidateRect, MonitorFromWindow, ReleaseDC, RestoreDC, SaveDC, SelectObject, SetBkMode,
-    SetTextColor, CLEARTYPE_QUALITY, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT,
-    COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, DEFAULT_CHARSET, DT_CALCRECT,
-    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_WORDBREAK, FF_DONTCARE,
-    FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, LOGPIXELSY, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, PAINTSTRUCT, TEXTMETRICW, TRANSPARENT,
+    BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
+    IntersectClipRect, InvalidateRect, RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor,
+    COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
+    COLOR_WINDOWTEXT, DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT,
+    DT_SINGLELINE, DT_WORDBREAK, HDC, HFONT, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetClientRect, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId,
-    LoadCursorW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
+    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, LoadCursorW, RegisterClassW,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
     CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_CLOSE,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WNDCLASSW,
     WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_POPUP,
 };
 
+use crate::winui;
 use crate::WinError;
 
 const CLASS_NAME: PCWSTR = w!("LexiSwitchChooser");
@@ -172,9 +168,9 @@ pub fn show(
         let _ = RegisterClassW(&class);
     }
 
-    let scale = dpi_scale();
-    let (font, bold) = fonts(scale);
-    let (line_height, text_line, char_width) = metrics(font, scale);
+    let scale = winui::dpi_scale();
+    let (font, bold) = (winui::ui_font(scale, false), winui::ui_font(scale, true));
+    let (line_height, text_line, char_width) = winui::metrics(font, scale);
     let mut state = Chooser {
         original,
         candidates,
@@ -236,7 +232,7 @@ pub fn show(
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(60));
         }
-        let took = force_foreground(hwnd);
+        let took = winui::take_foreground(hwnd);
         #[cfg(feature = "chooser-diag")]
         eprintln!("[chooser] force_foreground attempt {attempt} -> {took}");
         if took {
@@ -293,134 +289,6 @@ pub fn show(
     Ok(state.decision.unwrap_or(Decision::Cancel))
 }
 
-/// Take the foreground, working around the restriction that normally prevents it.
-///
-/// `SetForegroundWindow` alone is not enough and its failure is invisible in the worst way: the
-/// window is still *activated* within its own thread, so it receives `WM_ACTIVATE` and looks
-/// entirely healthy, while every keystroke continues to go to whatever kept the foreground.
-/// Measured, not assumed — the first scripted run of `probe_chooser` logged `WM_ACTIVATE` and
-/// then not one `WM_KEYDOWN` out of six keys sent.
-///
-/// Windows grants the foreground to a process that owns the current foreground window, among
-/// other cases. Attaching this thread's input queue to the foreground window's thread makes
-/// that true for the duration of the call, which is the long-established way through. The
-/// attachment is dropped immediately: while it is in place the two threads share focus and
-/// keyboard state, which is not a condition to leave running.
-///
-/// Returns whether the window really ended up in front, so a caller can say so rather than
-/// presenting a window that cannot be typed into.
-fn force_foreground(hwnd: HWND) -> bool {
-    // SAFETY: no preconditions. A null foreground window yields thread id 0, which the guard
-    // below treats as "nothing to attach to".
-    let their_thread = unsafe { GetWindowThreadProcessId(GetForegroundWindow(), None) };
-    // SAFETY: no preconditions.
-    let our_thread = unsafe { GetCurrentThreadId() };
-
-    let attached = their_thread != 0
-        && their_thread != our_thread
-        // SAFETY: both thread ids are live for the call — ours by definition, theirs because it
-        // owns the window that is currently in front. A refusal is reported as a bool.
-        && unsafe { AttachThreadInput(our_thread, their_thread, true) }.as_bool();
-
-    // SAFETY: `hwnd` is alive and owned by this thread. Each call reports failure as a bool,
-    // and the check below is what decides whether any of it worked.
-    unsafe {
-        let _ = SetForegroundWindow(hwnd);
-        let _ = BringWindowToTop(hwnd);
-        let _ = SetFocus(Some(hwnd));
-    }
-
-    if attached {
-        // SAFETY: detaching the attachment made above, with the same two thread ids.
-        unsafe {
-            let _ = AttachThreadInput(our_thread, their_thread, false);
-        }
-    }
-
-    // SAFETY: no preconditions.
-    let now = unsafe { GetForegroundWindow() };
-    now == hwnd
-}
-
-/// Pixels per logical unit at the primary display's DPI, as a whole-number scale.
-///
-/// Read from the device context rather than `GetDpiForWindow` so no window is needed and no
-/// further windows-rs feature is pulled in for it.
-fn dpi_scale() -> i32 {
-    // SAFETY: a null HDC asks GetDeviceCaps about the primary display, which is what is wanted
-    // before any window exists.
-    let dpi = unsafe { GetDeviceCaps(None, LOGPIXELSY) };
-    if dpi <= 0 {
-        1
-    } else {
-        (dpi / 96).max(1)
-    }
-}
-
-/// The regular and emphasised faces, sized for the display.
-fn fonts(scale: i32) -> (HFONT, HFONT) {
-    let height = -(11 * 96 * scale / 72);
-    let make = |weight: i32| {
-        // SAFETY: every argument is a plain value and the face name is a static NUL-terminated
-        // wide string. A failure returns a null HFONT, which SelectObject tolerates by leaving
-        // the DC's current font in place.
-        unsafe {
-            CreateFontW(
-                height,
-                0,
-                0,
-                0,
-                weight,
-                0,
-                0,
-                0,
-                DEFAULT_CHARSET,
-                OUT_TT_PRECIS,
-                FONT_CLIP_PRECISION(0),
-                CLEARTYPE_QUALITY,
-                FF_DONTCARE.0 as u32,
-                // Segoe UI covers Cyrillic, which is most of what this window renders.
-                w!("Segoe UI"),
-            )
-        }
-    };
-    (make(FW_NORMAL.0 as i32), make(FW_SEMIBOLD.0 as i32))
-}
-
-/// The height of one line and the width of one character, for the font that will be used.
-///
-/// Measured against a screen device context *before* the window exists, because the window has
-/// to be sized from these numbers. Measuring lazily during the first paint is what clipped the
-/// footer: the layout advanced by the font's real line height while the window had been sized
-/// with a guess, so the last line fell outside the client area and the target layout that
-/// task 3.7 requires be named was drawn off the bottom edge.
-fn metrics(font: HFONT, scale: i32) -> (i32, i32, i32) {
-    // SAFETY: a null window handle asks for a DC covering the whole screen, which is a valid
-    // request and needs no window to exist yet.
-    let hdc = unsafe { GetDC(None) };
-    if hdc.is_invalid() {
-        return (22 * scale, 16 * scale, 8 * scale);
-    }
-    let mut tm = TEXTMETRICW::default();
-    // SAFETY: `hdc` is the screen DC just obtained and `tm` lives for the whole call. The
-    // previously selected font is restored before the DC is released.
-    let measured = unsafe {
-        let previous = SelectObject(hdc, HGDIOBJ(font.0));
-        let ok = GetTextMetricsW(hdc, &mut tm).as_bool();
-        SelectObject(hdc, previous);
-        ReleaseDC(None, hdc);
-        ok
-    };
-    if measured {
-        (
-            tm.tmHeight + 8 * scale,
-            (tm.tmHeight + tm.tmExternalLeading).max(1),
-            tm.tmAveCharWidth.max(1),
-        )
-    } else {
-        (22 * scale, 16 * scale, 8 * scale)
-    }
-}
 
 /// Where the window goes and how big it is.
 ///
@@ -429,35 +297,13 @@ fn metrics(font: HFONT, scale: i32) -> (i32, i32, i32) {
 /// that would cover the very text under review.
 fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
     let scale = state.scale;
-    let width = 760 * scale;
-    let height = state.height_for(state.expanded);
-
-    // SAFETY: no preconditions; a null foreground window resolves to the nearest monitor,
-    // which for a null handle is the primary one.
-    let monitor = unsafe { MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTONEAREST) };
-    let mut info = MONITORINFO {
-        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    // SAFETY: `info` has its cbSize set as the API requires and lives for the whole call.
-    let have = unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool();
-    let work = if have {
-        info.rcWork
-    } else {
-        RECT {
-            left: 0,
-            top: 0,
-            right: 1920,
-            bottom: 1080,
-        }
-    };
-
-    let width = width.min(work.right - work.left - 40 * scale);
-    let height = height.min(work.bottom - work.top - 40 * scale);
-    let x = work.left + (work.right - work.left - width) / 2;
-    // Slightly above centre: the eye goes there first, and it is less likely to sit on top of
-    // the text being corrected than dead centre is.
-    let y = work.top + (work.bottom - work.top - height) / 3;
+    let work = winui::work_area();
+    // Never wider or taller than the screen it has to fit on.
+    let width = (760 * scale).min(work.right - work.left - 40 * scale);
+    let height = state
+        .height_for(state.expanded)
+        .min(work.bottom - work.top - 40 * scale);
+    let (x, y) = winui::place_in(work, width, height);
     (x, y, width, height)
 }
 

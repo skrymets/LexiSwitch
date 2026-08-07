@@ -21,6 +21,7 @@ use lexiswitch_core::state::{AgentState, Shortcut};
 
 use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
+use lexiswitch_win::recorder::{self, Recorded};
 use lexiswitch_win::inject::FocusGuard;
 use lexiswitch_win::layouts::{self, InstalledLayout};
 use lexiswitch_win::tray::{tray_event, MenuCommand, Tray, WM_TRAY};
@@ -100,7 +101,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // A shortcut another application holds is a state, not an exit.
     let mut hotkeys = None;
-    let shortcut = match register_hotkeys(&window, &config) {
+    let mut shortcut = match register_hotkeys(&window, &config) {
         Ok(registered) => {
             hotkeys = Some(registered);
             Shortcut::Registered(config.hotkeys.convert_selection.clone())
@@ -294,6 +295,41 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "APPDATA is not set, so there is nowhere to look.",
                     ),
                 },
+                MenuCommand::ChangeShortcut => {
+                    change_shortcut(
+                        &window,
+                        &tray,
+                        &mut config,
+                        &config_path,
+                        &mut hotkeys,
+                        &mut shortcut,
+                        &mut log,
+                    );
+                    state = AgentState::resolve(
+                        layout_count,
+                        shortcut.clone(),
+                        enabled,
+                        runtime_error.clone(),
+                    );
+                    tray.set_state(&state);
+                }
+                MenuCommand::Diagnostics => {
+                    // Everything that decides behaviour, in one balloon. No selected text and
+                    // no conversion results: those never leave the transaction they belong to.
+                    tray.notify(
+                        &state.summary(),
+                        &format!(
+                            "{}\nLayouts installed: {}. Configuration: {}. Logging: {}.",
+                            state.explanation(),
+                            layout_count,
+                            config_path
+                                .as_deref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "none".into()),
+                            if config.logging.enabled { "on" } else { "off" },
+                        ),
+                    );
+                }
                 MenuCommand::OpenConfig => open_config(&config_path, &tray),
                 MenuCommand::Quit => return Flow::Stop,
             }
@@ -337,6 +373,98 @@ fn request_conversion(
         active,
         allow_clipboard: config.selection.allow_clipboard_fallback,
     });
+}
+
+/// Record a replacement shortcut, try it, and keep it only if it works.
+///
+/// Loops until something is registered or the user gives up, because a recorder that closes on
+/// a combination it could not take would leave the user exactly where they started with no
+/// explanation. A refusal is reported inside the recorder, next to where they will try again.
+///
+/// Nothing is written to the configuration file until a combination is actually registered. The
+/// file describes behaviour, so writing a shortcut that does not work would make it a lie —
+/// and on the next start the program would come up in a conflict it had recorded for itself.
+fn change_shortcut(
+    window: &MessageWindow,
+    tray: &Tray,
+    config: &mut Config,
+    config_path: &Option<std::path::PathBuf>,
+    hotkeys: &mut Option<Hotkeys>,
+    shortcut: &mut Shortcut,
+    log: &mut EventLog,
+) {
+    let mut rejected: Option<String> = None;
+
+    loop {
+        let recorded = match recorder::show(shortcut, rejected.take()) {
+            Ok(r) => r,
+            Err(e) => {
+                tray.notify("Could not open the recorder", &e.to_string());
+                return;
+            }
+        };
+        let Recorded::Chosen(binding) = recorded else {
+            log.note("shortcut_recording_cancelled");
+            return;
+        };
+
+        // Release what is held before trying the replacement: a combination cannot be tested
+        // while this process is the thing holding it, and re-registering the same one would
+        // otherwise look like a conflict with itself.
+        *hotkeys = None;
+        let mut trial = config.clone();
+        trial.hotkeys.convert_selection = binding.clone();
+
+        match register_hotkeys(window, &trial) {
+            Ok(registered) => {
+                *hotkeys = Some(registered);
+                *config = trial;
+                *shortcut = Shortcut::Registered(binding.clone());
+                log.note("shortcut_changed");
+
+                let written = persist_shortcut(config_path, &binding);
+                tray.notify(
+                    "Shortcut changed",
+                    &match written {
+                        Ok(()) => format!("{binding} now converts the selection."),
+                        Err(e) => format!(
+                            "{binding} now converts the selection, but it could not be saved: \
+                             {e}. It will revert when LexiSwitch restarts."
+                        ),
+                    },
+                );
+                return;
+            }
+            Err(e) => {
+                // Put back whatever worked before. Silence would be the worst outcome of an
+                // attempt to fix silence.
+                if matches!(shortcut, Shortcut::Registered(_)) {
+                    *hotkeys = register_hotkeys(window, config).ok();
+                }
+                log.note("shortcut_rejected");
+                rejected = Some(format!("{binding} is not available: {e}"));
+            }
+        }
+    }
+}
+
+/// Write the shortcut into the configuration file, leaving the rest of it alone.
+fn persist_shortcut(
+    config_path: &Option<std::path::PathBuf>,
+    binding: &str,
+) -> Result<(), String> {
+    let Some(path) = config_path else {
+        return Err("APPDATA is not set, so there is nowhere to save it".into());
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // An unreadable file is treated as an absent one rather than as a reason to refuse: the
+    // rewrite creates what it needs, and failing here would leave a working shortcut unsaved
+    // for no benefit.
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = lexiswitch_core::config::rewrite_hotkey(&existing, binding);
+    std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
 fn register_hotkeys(window: &MessageWindow, config: &Config) -> Result<Hotkeys, Box<dyn Error>> {

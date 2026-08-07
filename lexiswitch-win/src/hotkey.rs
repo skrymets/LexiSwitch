@@ -198,3 +198,106 @@ impl std::fmt::Display for HotkeyError {
 }
 
 impl std::error::Error for HotkeyError {}
+
+/// Render a virtual-key code and modifier state as text [`parse_binding`] accepts.
+///
+/// The inverse of the table above, and deliberately written next to it: the two must agree, and
+/// a name produced here that cannot be parsed back would be written into the user's
+/// configuration file and rejected on the next load.
+///
+/// Returns `None` for a key with no name, so a caller recording a combination can decline it
+/// rather than persist something unusable.
+pub fn format_binding(modifiers: HOT_KEY_MODIFIERS, vkey: u32) -> Option<String> {
+    let key = key_name(vkey)?;
+    let mut parts = Vec::new();
+    // A fixed order, so the same combination always renders the same way. The user's file
+    // should not gain a diff because they pressed Alt before Ctrl.
+    if modifiers & MOD_CONTROL != HOT_KEY_MODIFIERS(0) {
+        parts.push("Ctrl");
+    }
+    if modifiers & MOD_ALT != HOT_KEY_MODIFIERS(0) {
+        parts.push("Alt");
+    }
+    if modifiers & MOD_SHIFT != HOT_KEY_MODIFIERS(0) {
+        parts.push("Shift");
+    }
+    if modifiers & MOD_WIN != HOT_KEY_MODIFIERS(0) {
+        parts.push("Win");
+    }
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
+/// The canonical name for a virtual-key code, or `None` if it has none.
+fn key_name(vkey: u32) -> Option<String> {
+    // Only these two ranges are the ASCII characters they look like. Testing
+    // `char::from_u32(vkey).is_ascii_alphanumeric()` instead is wrong and quietly so: VK_F1 is
+    // 0x70, which is ASCII 'p', so F1 rendered as "P" and parsed back as the letter.
+    if (0x30..=0x39).contains(&vkey) || (0x41..=0x5A).contains(&vkey) {
+        if let Some(c) = char::from_u32(vkey) {
+            return Some(c.to_ascii_uppercase().to_string());
+        }
+    }
+    Some(
+        match vkey {
+            0x13 => "Pause",
+            0x20 => "Space",
+            0x09 => "Tab",
+            0x0D => "Enter",
+            0x1B => "Escape",
+            0x2D => "Insert",
+            0x2E => "Delete",
+            0x24 => "Home",
+            0x23 => "End",
+            0x21 => "PageUp",
+            0x22 => "PageDown",
+            0x25 => "Left",
+            0x26 => "Up",
+            0x27 => "Right",
+            0x28 => "Down",
+            0x70..=0x7B => return Some(format!("F{}", vkey - 0x70 + 1)),
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every name this produces must parse back to what produced it. A binding written to the
+    /// user's file that the loader then rejects is the worst of both worlds.
+    #[test]
+    fn formatting_round_trips_through_parsing() {
+        let cases: &[(HOT_KEY_MODIFIERS, u32)] = &[
+            (MOD_CONTROL | MOD_ALT, b'K' as u32),
+            (MOD_SHIFT, 0x13),
+            (HOT_KEY_MODIFIERS(0), 0x70),
+            (MOD_WIN | MOD_CONTROL, 0x7B),
+            (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN, b'9' as u32),
+            (MOD_ALT, 0x22),
+        ];
+        for (modifiers, vkey) in cases {
+            let text = format_binding(*modifiers, *vkey).expect("a nameable key");
+            let parsed = parse_binding(&text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+            assert_eq!(parsed.modifiers, *modifiers, "{text:?}");
+            assert_eq!(parsed.vkey, *vkey, "{text:?}");
+        }
+    }
+
+    /// Modifier order is fixed, not the order they were pressed in.
+    #[test]
+    fn modifiers_render_in_a_fixed_order() {
+        let a = format_binding(MOD_ALT | MOD_CONTROL, b'K' as u32).unwrap();
+        let b = format_binding(MOD_CONTROL | MOD_ALT, b'K' as u32).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, "Ctrl+Alt+K");
+    }
+
+    /// A key with no name is declined rather than rendered as something unparseable.
+    #[test]
+    fn an_unnameable_key_is_declined() {
+        assert_eq!(format_binding(MOD_CONTROL, 0xFF), None);
+    }
+}

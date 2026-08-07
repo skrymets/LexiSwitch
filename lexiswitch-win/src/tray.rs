@@ -80,6 +80,8 @@ pub enum MenuCommand {
     OpenConfig = 102,
     Quit = 103,
     ConvertSelection = 104,
+    ChangeShortcut = 105,
+    Diagnostics = 106,
 }
 
 impl MenuCommand {
@@ -89,6 +91,8 @@ impl MenuCommand {
             101 => Some(Self::ReloadConfig),
             102 => Some(Self::OpenConfig),
             104 => Some(Self::ConvertSelection),
+            105 => Some(Self::ChangeShortcut),
+            106 => Some(Self::Diagnostics),
             103 => Some(Self::Quit),
             _ => None,
         }
@@ -169,6 +173,22 @@ impl Tray {
                 w!("Disable LexiSwitch")
             };
             let _ = AppendMenuW(menu, MF_STRING, MenuCommand::EnableDisable as usize, toggle);
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+            // Settings and diagnostics stay reachable in every state, including the ones that
+            // stop conversion. A user who has just been told what is wrong needs somewhere to
+            // act on it, and the shortcut recorder is the only way out of a conflict.
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                MenuCommand::ChangeShortcut as usize,
+                w!("Change shortcut…"),
+            );
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                MenuCommand::Diagnostics as usize,
+                w!("Diagnostics"),
+            );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(
                 menu,

@@ -35,7 +35,9 @@ pub mod langswitch;
 pub mod layouts;
 pub mod selection;
 pub mod transaction;
+pub mod recorder;
 pub mod tray;
 pub mod window;
+pub mod winui;
 
 pub use error::WinError;

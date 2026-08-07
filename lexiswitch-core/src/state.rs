@@ -156,3 +156,23 @@ impl AgentState {
         }
     }
 }
+
+/// A few combinations worth trying, when the configured one is unavailable.
+///
+/// Suggestions, and nothing stronger. Whether any of these is free depends on every other
+/// application running on the machine, which cannot be known from here — the only way to find
+/// out is to attempt the registration, which is what the recorder does. Presenting them as
+/// guaranteed would be a promise this program is in no position to make, and the one thing
+/// worse than a conflict is being told a combination is free and finding it is not.
+///
+/// The list is deliberately short and unglamorous: combinations unlikely to collide with an
+/// editor's own bindings, with the current one filtered out because suggesting what the user
+/// already has is noise.
+pub fn suggested_shortcuts(current: &str) -> Vec<String> {
+    ["Ctrl+Alt+K", "Ctrl+Shift+Insert", "Alt+Pause", "Ctrl+Alt+Space"]
+        .into_iter()
+        .filter(|s| !s.eq_ignore_ascii_case(current.trim()))
+        .take(3)
+        .map(str::to_string)
+        .collect()
+}

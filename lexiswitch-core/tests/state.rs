@@ -148,3 +148,27 @@ fn the_summary_names_a_working_shortcut() {
     let s = AgentState::resolve(2, Shortcut::Registered("Ctrl+Alt+K".into()), true, None);
     assert!(s.summary().contains("Ctrl+Alt+K"), "{}", s.summary());
 }
+
+/// Suggestions never include the combination the user already has, which is the one thing
+/// known not to work.
+#[test]
+fn suggestions_exclude_the_current_shortcut() {
+    let s = lexiswitch_core::state::suggested_shortcuts("Ctrl+Alt+K");
+    assert!(!s.iter().any(|x| x == "Ctrl+Alt+K"), "{s:?}");
+    assert!(!s.is_empty());
+}
+
+/// Case and stray spacing in the configuration file should not defeat the filter.
+#[test]
+fn suggestions_match_the_current_shortcut_loosely() {
+    for current in ["ctrl+alt+k", "  Ctrl+Alt+K  "] {
+        let s = lexiswitch_core::state::suggested_shortcuts(current);
+        assert!(!s.iter().any(|x| x.eq_ignore_ascii_case("ctrl+alt+k")), "{s:?}");
+    }
+}
+
+/// Short enough to read at a glance; a list of ten is not a suggestion.
+#[test]
+fn suggestions_are_few() {
+    assert!(lexiswitch_core::state::suggested_shortcuts("Shift+Pause").len() <= 3);
+}

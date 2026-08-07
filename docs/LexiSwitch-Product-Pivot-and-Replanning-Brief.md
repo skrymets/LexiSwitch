@@ -933,41 +933,41 @@ Selected text could not be read from this application.
 
 ## 16. Feature-level change intentions
 
-| Feature or behaviour                    | Why it is problematic                                                                 | Decision and intention to change                                                  |
-|-----------------------------------------|----------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
-| Last-word correction                    | Requires typing history, reconstruction, focus tracking, timeouts and fragile editing. | Remove the feature entirely.                                                      |
-| Continuous keystroke observation        | Resembles keylogger behaviour and is blocked by endpoint protection.                   | Remove the complete observation and rolling-buffer subsystem.                     |
-| Raw Input typing buffer                 | Exists only to support last-word reconstruction.                                       | Remove the buffer, page-locking, wiping and related lifecycle rules.              |
-| Password-field detection                | Exists to make continuous capture safer but cannot remove the EDR concern.              | Remove it with the capture subsystem.                                             |
-| Excluded-application capture rules      | Add configuration and verification complexity for an unwanted feature.                 | Remove capture-related exclusions.                                                |
-| Per-character replacement               | Can lose characters, create redundant symbols and produce multiple undo operations.    | Replace selected text as one logical operation where supported.                   |
-| Repeated shortcut cycling               | Hidden state, timing dependence, selection loss and unclear ordering.                  | Remove cycling. Show all candidates in one chooser.                               |
-| Double-press timing window              | Creates race conditions and unpredictable interaction.                                | Remove all multi-press timing semantics.                                          |
-| Installed-layout order as navigation    | Forces the user to remember an invisible system order.                                 | Present candidates by explicit source and target labels.                          |
-| Current layout as conversion source     | Current state does not identify the historical source of selected text.                | Generate source candidates from selected characters and installed layouts.        |
-| Immediate silent replacement            | Makes success, no-change and failure difficult to distinguish.                         | Require explicit `Enter` or `Ctrl+Enter` commit in the redesigned baseline.        |
-| Separate normal and ambiguous UIs       | Creates unnecessary branching and inconsistent interaction.                           | Use one chooser for all candidate counts and confidence levels.                   |
-| Paginated candidate preview             | Requires redundant actions and hides available alternatives.                          | Show all distinct candidates in one list.                                         |
-| Full text in every candidate row        | Becomes unusable for long selections and duplicates content.                           | Use compact previews with optional expansion.                                     |
-| Near-caret overlay as default           | Complicates placement, long previews and application compatibility.                    | Use a stable active-monitor command palette first.                                |
-| Automatic layout switch after apply     | Changes future typing state as an implicit side effect.                                | Use explicit `Ctrl+Enter` for apply-and-switch.                                   |
-| Tray-only feedback                      | Too far from the correction and insufficient for candidate comparison.                 | Put transaction feedback in the chooser; keep persistent state in the tray.       |
-| Tray pause/resume                       | Refers to a capture model that will no longer exist.                                   | Rename to enable/disable LexiSwitch.                                               |
-| Fixed global shortcut                   | May collide with IDEs and other applications.                                          | Make the shortcut configurable and validate registration.                         |
-| Silent shortcut fallback                | Makes invocation unpredictable.                                                        | Prohibit silent reassignment; require explicit user selection.                    |
-| Application exit on shortcut conflict   | Makes configuration and recovery difficult.                                            | Keep the app running in a visible conflict state.                                 |
-| Dynamic per-application shortcuts       | Increase state, configuration and cognitive load.                                      | Exclude from the initial redesign.                                                 |
-| Modifier double-tap invocation          | Usually requires broad keyboard observation.                                           | Exclude to avoid recreating capture and EDR risks.                                |
-| First-class clipboard conversion        | Duplicates the selected-text use case and expands product scope.                        | Remove from the core product. Clipboard may remain an internal transport fallback.|
-| Dictionary-based ranking                | Requires additional assets and introduces linguistic complexity.                       | Use deterministic layout and character heuristics only.                           |
-| External language files                 | Violate the desired single-executable distribution.                                    | Do not ship dictionaries, models or sidecar language files.                       |
-| Automatic learning                      | Can make ordering less predictable and requires additional state.                      | Defer. Permit only lightweight, local, resettable ordering preferences later.     |
-| Suspicious-segment conversion           | Allows the app to redefine the user's selected scope.                                  | Convert the whole explicit selection only.                                        |
-| Unmappable-character passthrough         | Can create partially converted results without the user noticing.                      | Keep passthrough, but report unchanged-character counts.                          |
-| Silent no-change result                 | Looks identical to a broken invocation.                                                | Show a distinct “no conversion found” result.                                     |
-| Refusal to start with one layout         | Prevents access to settings and diagnostics.                                            | Start disabled and explain that two layouts are required.                         |
-| Selected-text persistence               | Creates privacy risk and is unnecessary.                                                | Prohibit persistence and text logging.                                            |
-| Network capability                      | Unnecessary for deterministic layout conversion.                                       | Continue to prohibit network access.                                              |
+| Feature or behaviour                  | Why it is problematic                                                                  | Decision and intention to change                                                   |
+|---------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| Last-word correction                  | Requires typing history, reconstruction, focus tracking, timeouts and fragile editing. | Remove the feature entirely.                                                       |
+| Continuous keystroke observation      | Resembles keylogger behaviour and is blocked by endpoint protection.                   | Remove the complete observation and rolling-buffer subsystem.                      |
+| Raw Input typing buffer               | Exists only to support last-word reconstruction.                                       | Remove the buffer, page-locking, wiping and related lifecycle rules.               |
+| Password-field detection              | Exists to make continuous capture safer but cannot remove the EDR concern.             | Remove it with the capture subsystem.                                              |
+| Excluded-application capture rules    | Add configuration and verification complexity for an unwanted feature.                 | Remove capture-related exclusions.                                                 |
+| Per-character replacement             | Can lose characters, create redundant symbols and produce multiple undo operations.    | Replace selected text as one logical operation where supported.                    |
+| Repeated shortcut cycling             | Hidden state, timing dependence, selection loss and unclear ordering.                  | Remove cycling. Show all candidates in one chooser.                                |
+| Double-press timing window            | Creates race conditions and unpredictable interaction.                                 | Remove all multi-press timing semantics.                                           |
+| Installed-layout order as navigation  | Forces the user to remember an invisible system order.                                 | Present candidates by explicit source and target labels.                           |
+| Current layout as conversion source   | Current state does not identify the historical source of selected text.                | Generate source candidates from selected characters and installed layouts.         |
+| Immediate silent replacement          | Makes success, no-change and failure difficult to distinguish.                         | Require explicit `Enter` or `Ctrl+Enter` commit in the redesigned baseline.        |
+| Separate normal and ambiguous UIs     | Creates unnecessary branching and inconsistent interaction.                            | Use one chooser for all candidate counts and confidence levels.                    |
+| Paginated candidate preview           | Requires redundant actions and hides available alternatives.                           | Show all distinct candidates in one list.                                          |
+| Full text in every candidate row      | Becomes unusable for long selections and duplicates content.                           | Use compact previews with optional expansion.                                      |
+| Near-caret overlay as default         | Complicates placement, long previews and application compatibility.                    | Use a stable active-monitor command palette first.                                 |
+| Automatic layout switch after apply   | Changes future typing state as an implicit side effect.                                | Use explicit `Ctrl+Enter` for apply-and-switch.                                    |
+| Tray-only feedback                    | Too far from the correction and insufficient for candidate comparison.                 | Put transaction feedback in the chooser; keep persistent state in the tray.        |
+| Tray pause/resume                     | Refers to a capture model that will no longer exist.                                   | Rename to enable/disable LexiSwitch.                                               |
+| Fixed global shortcut                 | May collide with IDEs and other applications.                                          | Make the shortcut configurable and validate registration.                          |
+| Silent shortcut fallback              | Makes invocation unpredictable.                                                        | Prohibit silent reassignment; require explicit user selection.                     |
+| Application exit on shortcut conflict | Makes configuration and recovery difficult.                                            | Keep the app running in a visible conflict state.                                  |
+| Dynamic per-application shortcuts     | Increase state, configuration and cognitive load.                                      | Exclude from the initial redesign.                                                 |
+| Modifier double-tap invocation        | Usually requires broad keyboard observation.                                           | Exclude to avoid recreating capture and EDR risks.                                 |
+| First-class clipboard conversion      | Duplicates the selected-text use case and expands product scope.                       | Remove from the core product. Clipboard may remain an internal transport fallback. |
+| Dictionary-based ranking              | Requires additional assets and introduces linguistic complexity.                       | Use deterministic layout and character heuristics only.                            |
+| External language files               | Violate the desired single-executable distribution.                                    | Do not ship dictionaries, models or sidecar language files.                        |
+| Automatic learning                    | Can make ordering less predictable and requires additional state.                      | Defer. Permit only lightweight, local, resettable ordering preferences later.      |
+| Suspicious-segment conversion         | Allows the app to redefine the user's selected scope.                                  | Convert the whole explicit selection only.                                         |
+| Unmappable-character passthrough      | Can create partially converted results without the user noticing.                      | Keep passthrough, but report unchanged-character counts.                           |
+| Silent no-change result               | Looks identical to a broken invocation.                                                | Show a distinct “no conversion found” result.                                      |
+| Refusal to start with one layout      | Prevents access to settings and diagnostics.                                           | Start disabled and explain that two layouts are required.                          |
+| Selected-text persistence             | Creates privacy risk and is unnecessary.                                               | Prohibit persistence and text logging.                                             |
+| Network capability                    | Unnecessary for deterministic layout conversion.                                       | Continue to prohibit network access.                                               |
 
 ---
 
@@ -975,36 +975,36 @@ Selected text could not be read from this application.
 
 The following table maps the original 28 requirements to the revised product direction.
 
-| #  | Existing requirement summary                                      | Disposition | Revised direction                                                                 |
-|----|-------------------------------------------------------------------|-------------|-----------------------------------------------------------------------------------|
-| 1  | Tray icon is always shown                                         | Alter       | Keep tray presence; add enabled, disabled, conflict and error states.             |
-| 2  | Tray provides pause, reload, config and quit                      | Alter       | Replace pause with enable/disable; add fallback invocation and diagnostics.       |
-| 3  | One human-readable config describes all behaviour                 | Alter       | Keep readable storage, but configuration must also be discoverable through UI.    |
-| 4  | Config changes apply without restart                             | Keep        | Continue supporting runtime application of valid settings.                        |
-| 5  | Invalid config preserves the last known good state                | Keep        | Continue preserving the active valid configuration and reporting errors.          |
-| 6  | Password-field detection cannot be disabled                      | Drop        | Password-field capture protection is unnecessary after capture removal.           |
-| 7  | Hotkey conflict is reported and names the combination            | Alter       | Remain running, show conflict state and provide keyboard-operable rebinding.       |
-| 8  | Every action-preventing failure reaches the user through tray     | Alter       | Transaction failures appear in the chooser; persistent failures appear in tray.   |
-| 9  | No network capability                                            | Keep        | Continue enforcing and verifying no network access.                               |
-| 10 | Logging is off by default and never records text                  | Strengthen  | Extend prohibition to original text, candidates, clipboard content and previews.  |
-| 11 | Observation cannot alter input and uses no keyboard hook          | Replace     | Prohibit general keyboard observation entirely.                                   |
-| 12 | At most 64 keystrokes are buffered in protected memory           | Drop        | Remove the keystroke buffer and all associated memory handling.                    |
-| 13 | Keystroke-derived data never reaches disk                        | Replace     | No keystrokes are captured; selected text and candidates must never persist.       |
-| 14 | Buffer disabled in passwords, exclusions and paused state         | Drop        | Remove all capture-state and excluded-application buffer logic.                    |
-| 15 | Buffer wiped on focus change, delimiters, timeout and conversion  | Drop        | Remove buffer lifecycle behaviour.                                                 |
-| 16 | Buffer stores physical key positions instead of characters       | Drop        | Historical typing reconstruction is no longer part of the product.                |
-| 17 | Layout tables are built from installed layouts                   | Keep        | Continue building runtime tables without compiled-in layout data.                  |
-| 18 | Application refuses to start with fewer than two layouts         | Alter       | Start in a disabled explanatory state while keeping settings accessible.           |
-| 19 | Conversion is position-based and preserves shift and case        | Keep        | Preserve this as the core conversion rule.                                         |
-| 20 | Unmappable and dead-key characters pass through unchanged        | Alter       | Keep passthrough and display unchanged-character counts.                           |
-| 21 | No-change conversion is reported                                 | Strengthen  | Remove unchanged candidates and show a clear no-valid-conversion state.            |
-| 22 | Round trip returns original text for mappable characters         | Keep        | Retain as a conversion-engine invariant and automated test.                        |
-| 23 | Conversion occurs only through explicit hotkey                   | Strengthen  | Require explicit invocation and explicit commit; never correct automatically.      |
-| 24 | Last-word hotkey replaces the most recently typed word           | Drop        | Remove the use case and all supporting capture and reconstruction code.            |
-| 25 | Selection hotkey replaces highlighted text in place              | Alter       | Open chooser first; replace only after `Enter` or `Ctrl+Enter`.                    |
-| 26 | Clipboard hotkey converts clipboard contents                     | Drop        | Remove as a first-class user feature.                                              |
-| 27 | Repeated presses cycle candidate layouts from the original       | Drop        | Replace with one chooser showing all distinct candidates simultaneously.           |
-| 28 | Active layout follows correction by default                      | Alter       | Make layout switching explicit through `Ctrl+Enter`.                               |
+| #  | Existing requirement summary                                     | Disposition | Revised direction                                                                |
+|----|------------------------------------------------------------------|-------------|----------------------------------------------------------------------------------|
+| 1  | Tray icon is always shown                                        | Alter       | Keep tray presence; add enabled, disabled, conflict and error states.            |
+| 2  | Tray provides pause, reload, config and quit                     | Alter       | Replace pause with enable/disable; add fallback invocation and diagnostics.      |
+| 3  | One human-readable config describes all behaviour                | Alter       | Keep readable storage, but configuration must also be discoverable through UI.   |
+| 4  | Config changes apply without restart                             | Keep        | Continue supporting runtime application of valid settings.                       |
+| 5  | Invalid config preserves the last known good state               | Keep        | Continue preserving the active valid configuration and reporting errors.         |
+| 6  | Password-field detection cannot be disabled                      | Drop        | Password-field capture protection is unnecessary after capture removal.          |
+| 7  | Hotkey conflict is reported and names the combination            | Alter       | Remain running, show conflict state and provide keyboard-operable rebinding.     |
+| 8  | Every action-preventing failure reaches the user through tray    | Alter       | Transaction failures appear in the chooser; persistent failures appear in tray.  |
+| 9  | No network capability                                            | Keep        | Continue enforcing and verifying no network access.                              |
+| 10 | Logging is off by default and never records text                 | Strengthen  | Extend prohibition to original text, candidates, clipboard content and previews. |
+| 11 | Observation cannot alter input and uses no keyboard hook         | Replace     | Prohibit general keyboard observation entirely.                                  |
+| 12 | At most 64 keystrokes are buffered in protected memory           | Drop        | Remove the keystroke buffer and all associated memory handling.                  |
+| 13 | Keystroke-derived data never reaches disk                        | Replace     | No keystrokes are captured; selected text and candidates must never persist.     |
+| 14 | Buffer disabled in passwords, exclusions and paused state        | Drop        | Remove all capture-state and excluded-application buffer logic.                  |
+| 15 | Buffer wiped on focus change, delimiters, timeout and conversion | Drop        | Remove buffer lifecycle behaviour.                                               |
+| 16 | Buffer stores physical key positions instead of characters       | Drop        | Historical typing reconstruction is no longer part of the product.               |
+| 17 | Layout tables are built from installed layouts                   | Keep        | Continue building runtime tables without compiled-in layout data.                |
+| 18 | Application refuses to start with fewer than two layouts         | Alter       | Start in a disabled explanatory state while keeping settings accessible.         |
+| 19 | Conversion is position-based and preserves shift and case        | Keep        | Preserve this as the core conversion rule.                                       |
+| 20 | Unmappable and dead-key characters pass through unchanged        | Alter       | Keep passthrough and display unchanged-character counts.                         |
+| 21 | No-change conversion is reported                                 | Strengthen  | Remove unchanged candidates and show a clear no-valid-conversion state.          |
+| 22 | Round trip returns original text for mappable characters         | Keep        | Retain as a conversion-engine invariant and automated test.                      |
+| 23 | Conversion occurs only through explicit hotkey                   | Strengthen  | Require explicit invocation and explicit commit; never correct automatically.    |
+| 24 | Last-word hotkey replaces the most recently typed word           | Drop        | Remove the use case and all supporting capture and reconstruction code.          |
+| 25 | Selection hotkey replaces highlighted text in place              | Alter       | Open chooser first; replace only after `Enter` or `Ctrl+Enter`.                  |
+| 26 | Clipboard hotkey converts clipboard contents                     | Drop        | Remove as a first-class user feature.                                            |
+| 27 | Repeated presses cycle candidate layouts from the original       | Drop        | Replace with one chooser showing all distinct candidates simultaneously.         |
+| 28 | Active layout follows correction by default                      | Alter       | Make layout switching explicit through `Ctrl+Enter`.                             |
 
 ---
 

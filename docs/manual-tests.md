@@ -746,3 +746,21 @@ diagnostics and never used to decide anything.
 The wider lesson is in the second row: a clipboard *open* is not a paste. Chrome opens the
 clipboard when it changes, when it pastes, and when it declines to paste into a read-only field.
 Nothing about opening it distinguishes those.
+
+---
+
+## The chooser's activation bug, reproduced in the recorder (2026-08-07)
+
+The shortcut recorder cancelled itself the instant it opened, logging
+`shortcut_recording_cancelled` with nothing visible on screen. Same cause as the chooser's
+vanishing window a few hours earlier: taking the foreground from another process emits
+activate, deactivate, activate before the user has touched anything, and a window that treats
+the middle one as "clicked away" ends its own transaction before its loop starts.
+
+Worth recording not as a new finding but as the same finding twice. The fix had been written,
+understood and commented — and it lived in the chooser's own state struct, so the second window
+did not get it. Extracting `winui` moved the *foreground handling* into shared code but left the
+*arming rule* behind in each window, which is precisely the part that was subtle.
+
+Both windows now arm only after the foreground has settled, and both confirm against
+`GetForegroundWindow` rather than trusting the message.

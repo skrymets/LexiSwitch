@@ -6,7 +6,11 @@
       *Verified 2026-08-07: a second instance started while the first held Shift+Pause kept
       running, logged `hotkey_conflict` naming the combination, and its tray icon received
       shell messages. Before this change the same run exited with code 1 and no icon.*
-- [ ] 1.4 Confirm by hand: start with one layout installed; the program explains and stays reachable
+- [x] 1.4 Confirm by hand: start with one layout installed; the program explains and stays reachable
+      *Accepted by the user 2026-08-07 without executing the manual leg, which would mean
+      removing a keyboard layout from their Windows configuration. The logic is covered by
+      `one_layout_disables_conversion_but_not_the_program`; what is untested is the real
+      startup path in that condition.*
 
 ## 2. Tray states
 
@@ -16,18 +20,22 @@
       *Verified against a genuine conflict: a second instance, started while the first held
       Shift+Pause, converted `Ghbdsn ltoj` to `Привіт дещо` from the tray command. Its log
       reads `hotkey_conflict` then `selection_requested` then `outcome_applied`.*
-- [ ] 2.4 Add settings and diagnostics entries
+- [x] 2.4 Add settings and diagnostics entries
 - [ ] 2.5 Confirm by hand that each of the five states is reachable and visibly different from the others
 
 ## 3. Shortcut recording
 
-- [ ] 3.1 A focused window that captures a key combination without acting on it, reading keys as a focused window and never through a hook
-- [ ] 3.2 Validate a recorded combination by attempting registration
-- [ ] 3.3 Apply a valid combination without restarting, unregistering and re-registering as one operation
-- [ ] 3.4 On failure, retain the previous working combination and report that the new one is unavailable
-- [ ] 3.5 Persist the recorded shortcut to the configuration file, preserving comments and formatting elsewhere in it
-- [ ] 3.6 Offer suggested alternatives, presented as suggestions rather than guarantees
-- [ ] 3.7 **Milestone:** a conflict is resolved entirely from the keyboard, with no restart and no file editing
+- [x] 3.1 A focused window that captures a key combination without acting on it, reading keys as a focused window and never through a hook
+- [x] 3.2 Validate a recorded combination by attempting registration
+- [x] 3.3 Apply a valid combination without restarting, unregistering and re-registering as one operation
+- [x] 3.4 On failure, retain the previous working combination and report that the new one is unavailable
+- [x] 3.5 Persist the recorded shortcut to the configuration file, preserving comments and formatting elsewhere in it
+- [x] 3.6 Offer suggested alternatives, presented as suggestions rather than guarantees
+- [x] 3.7 **Milestone:** a conflict is resolved entirely from the keyboard, with no restart and no file editing
+      *Verified against a real conflict: a second instance, unable to register Shift+Pause,
+      recorded Ctrl+Alt+K, registered it, wrote it to the configuration file leaving `[logging]`
+      untouched, and converted with it — all without restarting. Log: `hotkey_conflict`,
+      `shortcut_changed`, `config_reloaded`, `selection_requested`, `outcome_applied`.*
 
 ## 4. Configuration
 

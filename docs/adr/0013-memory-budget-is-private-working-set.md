@@ -16,11 +16,11 @@ number — it names two, which fall on opposite sides of the limit.
 Measured over an hour of five-minute samples against the release build
 (`docs/manual-tests.md`):
 
-| | working set | private working set |
-|---|---|---|
-| idle, before any conversion | 13.7 MB | 1.7 MB |
-| peak, just after the first conversion | 22.2 MB | 2.9 MB |
-| end of the hour | 21.1 MB | 1.7 MB |
+|                                       | working set | private working set |
+|---------------------------------------|-------------|---------------------|
+| idle, before any conversion           | 13.7 MB     | 1.7 MB              |
+| peak, just after the first conversion | 22.2 MB     | 2.9 MB              |
+| end of the hour                       | 21.1 MB     | 1.7 MB              |
 
 Both figures are flat or falling over the hour, and the handle count does not move, so nothing
 here is a leak. The gap between the columns is entirely shared system libraries mapped in on the

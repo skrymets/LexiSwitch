@@ -36,9 +36,9 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 
 - [x] 4.1 Rename `MenuCommand::PauseResume` to enable/disable and update its labels
 - [x] 4.2 Make the disabled state stop the hotkey converting, without reference to capture
-- [ ] 4.3 Confirm by hand: disable, press the hotkey, nothing converts; enable, it converts again
-      *Needs a person: the disable is reached through the tray menu, and driving that
-      synthetically would test a back door rather than the path a user takes.*
+- [x] 4.3 Confirm by hand: disable, press the hotkey, nothing converts; enable, it converts again
+      *Confirmed by the user 2026-08-07 through the tray menu, which is the path this task
+      exists to exercise.*
 
 ## 5. Prove the absence
 

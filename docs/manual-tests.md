@@ -361,7 +361,11 @@ it reproduces.
 
 ---
 
-### OPEN: converting a selection in Notepad++ deletes it
+### CLOSED: converting a selection in Notepad++ deletes it
+
+**Reproduced 2026-08-07, diagnosed and fixed the same day — see "A held modifier turns the
+copy into a deletion" below. The entry is kept as written, because the reasoning that failed
+to find it is worth more than a tidy record.**
 
 **Reproduced 2026-08-07, not diagnosed, not fixed.**
 
@@ -592,3 +596,42 @@ which is what made this present as "layout switching does not work" rather than 
 does not work". A probe that tested only the convenient handle would have reported success.
 
 **Do not narrow an `HKL` to 32 bits.** It is a handle, and handles are pointer-width.
+
+---
+
+## A held modifier turns the copy into a deletion (2026-08-07)
+
+Selecting text in Notepad++ and pressing `Shift+Pause` deleted it. No chooser appeared, and the
+log said `Selection could not be read: nothing is selected; nothing was changed` — which was
+true of every code path this program runs, and yet the user's text was gone.
+
+It was destroyed by the one keystroke the read path sends. `RegisterHotKey` consumes the
+`Pause` of `Shift+Pause` but nothing releases the `Shift`, and the user's hand is still on it
+milliseconds later when `Ctrl+C` goes out. The target receives `Ctrl+Shift+C`.
+
+Isolated to that single keystroke, same selection, same document:
+
+| sent to Notepad++ | copied | document |
+|---|---|---|
+| `Ctrl+C` | the selection | intact |
+| `Ctrl+C` with `Shift` held | nothing | **emptied** |
+
+Notepad tolerates the same chord, which is exactly why this took three sittings to find: every
+reproduction attempt in Notepad passed, and Notepad++ was reached only through the real hotkey,
+never through a probe.
+
+**`probe_modifier` was written to catch precisely this** — its own module comment says a held
+`Shift` "would explain both halves of a report that otherwise makes no sense: the copy produces
+nothing *and* the selection disappears." It was run against Notepad, came back clean, and the
+hypothesis was dropped. The probe was right and the target was wrong. A probe that exercises
+one application is evidence about that application and nothing else.
+
+**Fixed** by releasing any held `Shift`, `Alt` or `Win` before synthesising any chord
+(`inject::release_held_modifiers`). `Ctrl` is left alone: the chords supply it themselves and a
+user holding it changes nothing about what they mean. The release is not undone — the physical
+key is still down, so the user's own release follows and a duplicate key-up is harmless, while
+re-pressing on their behalf could leave a modifier stuck down.
+
+Verified after the fix, in Notepad++ through the real hotkey: chooser opens, `Escape` leaves the
+document intact, `Enter` converts correctly, the prior clipboard comes back, and one `Ctrl+Z`
+restores the original.

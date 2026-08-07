@@ -18,8 +18,9 @@
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_C,
-    VK_CONTROL, VK_V,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    VIRTUAL_KEY, VK_C, VK_CONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
@@ -98,8 +99,63 @@ pub fn paste(guard: &FocusGuard) -> Result<(), Abandoned> {
     chord(VK_V)
 }
 
+/// How long the target is given to notice the modifier release before the chord arrives.
+const MODIFIER_SETTLE: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// Release any modifier the user is still physically holding.
+///
+/// The hotkey is a chord — `Shift+Pause` by default. `RegisterHotKey` consumes the `Pause`, but
+/// nothing releases the `Shift`, and the user's hand is still on it when the conversion starts.
+/// Every chord synthesised from here then arrives at the target with that modifier added:
+/// `Ctrl+C` is delivered as `Ctrl+Shift+C`.
+///
+/// That is not a cosmetic difference. Measured in Notepad++ against the same selection:
+///
+/// | sent | copied | document |
+/// |---|---|---|
+/// | `Ctrl+C` | the selection | intact |
+/// | `Ctrl+C` with `Shift` held | nothing | **emptied** |
+///
+/// The copy returning nothing is reported honestly as "nothing is selected" — and by then the
+/// user's text is already gone, destroyed by a keystroke this program sent. Notepad tolerates
+/// the same chord, which is why this survived being probed once and dismissed.
+///
+/// `Ctrl` is deliberately not released: the chords here supply it themselves, and a user
+/// holding it changes nothing about what they mean.
+///
+/// The release is not undone afterwards. The physical key is still down, so the user's own
+/// release will follow and a duplicate key-up is harmless — whereas re-pressing a modifier on
+/// their behalf would leave it stuck down if they let go in between.
+fn release_held_modifiers() {
+    const HELD: [VIRTUAL_KEY; 6] = [VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN];
+
+    let ups: Vec<INPUT> = HELD
+        .into_iter()
+        // SAFETY: no preconditions; reports whether a key is currently down. The high bit is
+        // the pressed state, which is the sign bit of the i16 returned.
+        .filter(|vk| unsafe { GetAsyncKeyState(vk.0 as i32) } < 0)
+        .map(|vk| key(vk, true))
+        .collect();
+
+    if ups.is_empty() {
+        return;
+    }
+    // SAFETY: a live slice of fully-initialised INPUT structures with the element size the API
+    // requires. A short count here means some releases were not delivered, which the chord that
+    // follows would then get wrong — but there is nothing better to do about it than proceed,
+    // and the caller already treats a mangled result as a failure.
+    unsafe {
+        SendInput(&ups, std::mem::size_of::<INPUT>() as i32);
+    }
+    std::thread::sleep(MODIFIER_SETTLE);
+}
+
 /// Send Ctrl+<vk> as a press-and-release pair around the modifier.
 fn chord(vk: VIRTUAL_KEY) -> Result<(), Abandoned> {
+    // Before anything else: a modifier the user has not let go of is part of every chord sent
+    // from here, and in at least one editor that turns a copy into a deletion.
+    release_held_modifiers();
+
     let inputs = [
         key(VK_CONTROL, false),
         key(vk, false),

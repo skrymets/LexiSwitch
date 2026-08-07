@@ -84,6 +84,10 @@ fn set_clipboard(text: &str) -> bool {
 
 fn main() {
     let hold_shift = std::env::args().any(|a| a == "--shift");
+    // `--here` acts on whatever is already focused and already selected, launching nothing and
+    // seeding nothing. The reported Notepad++ failure is in an existing document, and a probe
+    // that opens its own can only ever reproduce a probe opening its own.
+    let here = std::env::args().any(|a| a == "--here");
     say!(
         "probe_chooser_live — the real path{}",
         if hold_shift { ", with Shift held" } else { "" }
@@ -99,30 +103,32 @@ fn main() {
     let tables: Vec<_> = installed.iter().map(|l| l.table.clone()).collect();
     let uia = Uia::new();
 
-    if std::process::Command::new("notepad.exe").spawn().is_err() {
-        say!("could not launch notepad.exe");
-        return;
-    }
-    for _ in 0..40 {
-        // SAFETY: no preconditions; a null handle is a valid answer.
-        if process_name(unsafe { GetForegroundWindow() }).eq_ignore_ascii_case("notepad.exe") {
-            break;
+    if !here {
+        if std::process::Command::new("notepad.exe").spawn().is_err() {
+            say!("could not launch notepad.exe");
+            return;
         }
-        thread::sleep(Duration::from_millis(250));
-    }
-    thread::sleep(Duration::from_millis(1500));
-    chord(VK_N);
-    thread::sleep(Duration::from_millis(1200));
+        for _ in 0..40 {
+            // SAFETY: no preconditions; a null handle is a valid answer.
+            if process_name(unsafe { GetForegroundWindow() }).eq_ignore_ascii_case("notepad.exe") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+        thread::sleep(Duration::from_millis(1500));
+        chord(VK_N);
+        thread::sleep(Duration::from_millis(1200));
 
-    // Seed by pasting rather than typing: typing is the mechanism this project retired.
-    let guard = FocusGuard::capture();
-    if !set_clipboard(SOURCE) || inject::paste(&guard).is_err() {
-        say!("could not seed the document");
-        return;
+        // Seed by pasting rather than typing: typing is the mechanism this project retired.
+        let guard = FocusGuard::capture();
+        if !set_clipboard(SOURCE) || inject::paste(&guard).is_err() {
+            say!("could not seed the document");
+            return;
+        }
+        thread::sleep(Duration::from_millis(500));
+        chord(VK_A);
+        thread::sleep(Duration::from_millis(300));
     }
-    thread::sleep(Duration::from_millis(500));
-    chord(VK_A);
-    thread::sleep(Duration::from_millis(300));
 
     if hold_shift {
         say!("  holding Shift down, as after Shift+Pause");

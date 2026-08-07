@@ -1,15 +1,18 @@
 ## 1. Startup stops being fatal
 
-- [ ] 1.1 Replace the `?` on hotkey registration at startup with a conflict state the program carries while running
-- [ ] 1.2 Replace the too-few-layouts exit with a disabled state that explains what is required
-- [ ] 1.3 Confirm by hand: start with the shortcut held by another application; the tray appears and the program keeps running
+- [x] 1.1 Replace the `?` on hotkey registration at startup with a conflict state the program carries while running
+- [x] 1.2 Replace the too-few-layouts exit with a disabled state that explains what is required
+- [x] 1.3 Confirm by hand: start with the shortcut held by another application; the tray appears and the program keeps running
+      *Verified 2026-08-07: a second instance started while the first held Shift+Pause kept
+      running, logged `hotkey_conflict` naming the combination, and its tray icon received
+      shell messages. Before this change the same run exited with code 1 and no icon.*
 - [ ] 1.4 Confirm by hand: start with one layout installed; the program explains and stays reachable
 
 ## 2. Tray states
 
-- [ ] 2.1 Model the five states — enabled, disabled, too few layouts, shortcut conflict, runtime error
-- [ ] 2.2 Reflect the current state in the icon or tooltip, including the active shortcut where one is registered
-- [ ] 2.3 Add the conversion command, working whether or not the global shortcut is registered
+- [x] 2.1 Model the five states — enabled, disabled, too few layouts, shortcut conflict, runtime error
+- [x] 2.2 Reflect the current state in the icon or tooltip, including the active shortcut where one is registered
+- [x] 2.3 Add the conversion command, working whether or not the global shortcut is registered
 - [ ] 2.4 Add settings and diagnostics entries
 - [ ] 2.5 Confirm by hand that each of the five states is reachable and visibly different from the others
 

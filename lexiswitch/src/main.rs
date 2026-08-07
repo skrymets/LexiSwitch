@@ -17,12 +17,13 @@
 use std::error::Error;
 
 use lexiswitch_core::config::Config;
+use lexiswitch_core::state::{AgentState, Shortcut};
 
 use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
 use lexiswitch_win::inject::FocusGuard;
 use lexiswitch_win::layouts::{self, InstalledLayout};
-use lexiswitch_win::tray::{tray_event, MenuCommand, State, Tray, WM_TRAY};
+use lexiswitch_win::tray::{tray_event, MenuCommand, Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
     WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_RBUTTONUP,
@@ -61,26 +62,67 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut log = EventLog::new(config.logging.enabled);
 
+    // Set when something fails in a way that leaves nothing else trustworthy. Carried rather
+    // than returned, so the tray still comes up to report it.
+    let mut runtime_error: Option<String> = None;
+
     // Reported, not silently dropped. A removed setting and a misspelled one both land here,
     // and naming them is the only way the user can tell which they are looking at. Held until
     // the tray exists, since that is where the user will see it.
     let ignored_at_startup = config.ignored_keys();
 
     // --- layouts, window, hotkeys ---------------------------------------------------
-    let layouts = layouts::build_all()?;
-    log.note(&format!("layouts_built count={}", layouts.len()));
+    //
+    // Neither of the two conditions below ends the process any more. Both used to be `?`, so a
+    // user whose shortcut was already taken — or who had one layout installed — got an exit
+    // code and no tray icon, which is indistinguishable from the program being broken. Both
+    // are recoverable without a restart, and neither can be acted on by someone who was never
+    // told about it.
+    let (layouts, layout_count) = match layouts::build_all() {
+        Ok(built) => {
+            let n = built.len();
+            log.note(&format!("layouts_built count={n}"));
+            (built, n)
+        }
+        Err(layouts::LayoutError::TooFewLayouts(n)) => {
+            log.note(&format!("layouts_insufficient count={n}"));
+            (Vec::new(), n)
+        }
+        // Anything else really is a failure to build tables, not a shortage of them.
+        Err(e) => {
+            log.note("layouts_failed");
+            runtime_error = Some(e.to_string());
+            (Vec::new(), 0)
+        }
+    };
 
     let window = MessageWindow::new()?;
-    let mut hotkeys = Some(register_hotkeys(&window, &config)?);
 
-    let tray = Tray::new(window.hwnd(), "LexiSwitch")?;
-    tray.notify(
-        "LexiSwitch",
-        &format!(
-            "Ready. Select text and press {} to convert it.",
-            config.hotkeys.convert_selection
-        ),
+    // A shortcut another application holds is a state, not an exit.
+    let mut hotkeys = None;
+    let shortcut = match register_hotkeys(&window, &config) {
+        Ok(registered) => {
+            hotkeys = Some(registered);
+            Shortcut::Registered(config.hotkeys.convert_selection.clone())
+        }
+        Err(e) => {
+            log.note(&format!("hotkey_conflict: {e}"));
+            Shortcut::Conflict(config.hotkeys.convert_selection.clone())
+        }
+    };
+
+    let mut enabled = true;
+    let mut state = AgentState::resolve(
+        layout_count,
+        shortcut.clone(),
+        enabled,
+        runtime_error.clone(),
     );
+
+    let tray = Tray::new(window.hwnd(), &state)?;
+    // Whatever the state is, say it — including when it is simply working. The startup balloon
+    // is where the shortcut is learned.
+    tray.notify("LexiSwitch", &state.explanation());
     if !ignored_at_startup.is_empty() {
         tray.notify(
             "Some settings were ignored",
@@ -91,10 +133,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         );
     }
-
-    // Whether the hotkey converts. Replaces the old paused state, which referred to keystroke
-    // recording that no longer happens.
-    let mut state = State::Enabled;
 
     // --- the worker ----------------------------------------------------------------
     let (work, outcomes) = Worker::spawn(window.waker());
@@ -172,7 +210,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
         match msg.message {
             WM_HOTKEY => {
-                if state == State::Disabled {
+                if !state.converts() {
                     return Flow::Continue;
                 }
                 if let Some(HotkeyId::ConvertSelection) = HotkeyId::from_raw(msg.wParam.0 as i32) {
@@ -181,21 +219,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     // travels only as a weak tiebreak on the target, because it is a fact about
                     // the present and says nothing about text typed at any earlier time
                     // (ADR-0012).
-                    let active = layout_name(&layouts, layouts::foreground_langid());
-                    log.note(&format!(
-                        "selection_requested active={} app={}",
-                        active.as_deref().unwrap_or("unknown"),
-                        process_name(FocusGuard::capture().window())
-                    ));
-                    work.send(Job::Selection {
-                        tables: layouts.iter().map(|l| l.table.clone()).collect(),
-                        handles: layouts
-                            .iter()
-                            .map(|l| (l.table.name().to_string(), l.hkl))
-                            .collect(),
-                        active,
-                        allow_clipboard: config.selection.allow_clipboard_fallback,
-                    });
+                    request_conversion(&work, &layouts, &config, &mut log);
                 }
             }
             // Logged unconditionally, before any guard. Two rounds of fixing this menu have
@@ -210,30 +234,25 @@ fn run() -> Result<(), Box<dyn Error>> {
                 if click != WM_RBUTTONUP && click != WM_CONTEXTMENU {
                     return Flow::Continue;
                 }
-                if let Some(command) = tray.show_menu(state) {
+                if let Some(command) = tray.show_menu(&state) {
                     match command {
                         MenuCommand::EnableDisable => {
-                            state = match state {
-                                State::Enabled => State::Disabled,
-                                State::Disabled => State::Enabled,
-                            };
-                            tray.set_state(state);
-                            match state {
-                                State::Enabled => {
-                                    log.note("enabled");
-                                    tray.notify(
-                                        "Enabled",
-                                        "The hotkey converts the selection again.",
-                                    );
-                                }
-                                State::Disabled => {
-                                    log.note("disabled");
-                                    tray.notify(
-                                        "Disabled",
-                                        "The hotkey no longer converts. Nothing is being \
-                                         recorded either way.",
-                                    );
-                                }
+                            enabled = !enabled;
+                            state = AgentState::resolve(
+                                layout_count,
+                                shortcut.clone(),
+                                enabled,
+                                runtime_error.clone(),
+                            );
+                            tray.set_state(&state);
+                            log.note(if enabled { "enabled" } else { "disabled" });
+                            tray.notify(&state.summary(), &state.explanation());
+                        }
+                        MenuCommand::ConvertSelection => {
+                            // The same job the hotkey sends, and the only way to convert while
+                            // the shortcut is unavailable.
+                            if state.converts() {
+                                request_conversion(&work, &layouts, &config, &mut log);
                             }
                         }
                         MenuCommand::ReloadConfig => match config_path.as_deref() {
@@ -282,6 +301,33 @@ fn run() -> Result<(), Box<dyn Error>> {
     log.note("shutdown");
     drop(work);
     Ok(())
+}
+
+/// Ask the worker to convert whatever is selected.
+///
+/// Reachable from the shortcut and from the tray. The tray path is not a convenience: it is
+/// what keeps the product usable while another application holds the shortcut.
+fn request_conversion(
+    work: &Worker,
+    layouts: &[InstalledLayout],
+    config: &Config,
+    log: &mut EventLog,
+) {
+    let active = layout_name(layouts, layouts::foreground_langid());
+    log.note(&format!(
+        "selection_requested active={} app={}",
+        active.as_deref().unwrap_or("unknown"),
+        process_name(FocusGuard::capture().window())
+    ));
+    work.send(Job::Selection {
+        tables: layouts.iter().map(|l| l.table.clone()).collect(),
+        handles: layouts
+            .iter()
+            .map(|l| (l.table.name().to_string(), l.hkl))
+            .collect(),
+        active,
+        allow_clipboard: config.selection.allow_clipboard_fallback,
+    });
 }
 
 fn register_hotkeys(window: &MessageWindow, config: &Config) -> Result<Hotkeys, Box<dyn Error>> {

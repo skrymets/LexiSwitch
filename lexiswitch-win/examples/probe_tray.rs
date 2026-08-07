@@ -28,6 +28,7 @@
 
 use std::io::Write;
 
+use lexiswitch_core::state::{AgentState, Shortcut};
 use lexiswitch_win::tray::{Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
 use windows::Win32::Foundation::HWND;
@@ -88,7 +89,8 @@ fn main() {
     say!("probe_tray — the product's tray code against a raw control, same window.");
     say!("  window: {:?}", window.hwnd().0);
 
-    let tray = Tray::new(window.hwnd(), "PRODUCT via Tray").expect("tray");
+    let state = AgentState::resolve(2, Shortcut::Registered("Shift+Pause".into()), true, None);
+    let tray = Tray::new(window.hwnd(), &state).expect("tray");
     say!("  uID 1  added by the product's Tray");
 
     // The application shows a balloon immediately after adding its icon, so the probe does

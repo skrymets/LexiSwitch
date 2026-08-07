@@ -16,29 +16,26 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, PostMessageW,
-    SetForegroundWindow, TrackPopupMenu, HICON, IDI_APPLICATION, IDI_HAND, MF_SEPARATOR,
+    SetForegroundWindow, TrackPopupMenu, HICON, IDI_APPLICATION, IDI_HAND, IDI_WARNING, MF_GRAYED, MF_SEPARATOR,
     MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
 };
 
+use lexiswitch_core::state::AgentState;
+
 use crate::WinError;
 
-/// Whether the hotkey will convert.
-///
-/// Named rather than a bare `bool` because this type's boolean used to mean the opposite —
-/// *paused* rather than *enabled* — and when it was renamed, one call site kept passing the
-/// old value. It still compiled, and the tray came up wearing the disabled icon. A bool has
-/// no polarity the compiler can check; this does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum State {
-    Enabled,
-    Disabled,
-}
-
 /// The icon for a state.
-fn load_icon(state: State) -> Result<HICON, WinError> {
-    let which = match state {
-        State::Enabled => IDI_APPLICATION,
-        State::Disabled => IDI_HAND,
+///
+/// Three icons, not five. A condition the user must act on is worth distinguishing from one
+/// they chose, and from everything working; which particular condition it is belongs in the
+/// tooltip, where there is room to say it.
+fn load_icon(state: &AgentState) -> Result<HICON, WinError> {
+    let which = if state.needs_attention() {
+        IDI_WARNING
+    } else if state.converts() {
+        IDI_APPLICATION
+    } else {
+        IDI_HAND
     };
     // SAFETY: both are built-in resource identifiers, so no module handle is needed.
     unsafe { LoadIconW(None, which) }.map_err(|e| WinError::new("LoadIconW", e))
@@ -82,6 +79,7 @@ pub enum MenuCommand {
     ReloadConfig = 101,
     OpenConfig = 102,
     Quit = 103,
+    ConvertSelection = 104,
 }
 
 impl MenuCommand {
@@ -90,6 +88,7 @@ impl MenuCommand {
             100 => Some(Self::EnableDisable),
             101 => Some(Self::ReloadConfig),
             102 => Some(Self::OpenConfig),
+            104 => Some(Self::ConvertSelection),
             103 => Some(Self::Quit),
             _ => None,
         }
@@ -97,12 +96,17 @@ impl MenuCommand {
 }
 
 impl Tray {
-    pub fn new(hwnd: HWND, tooltip: &str) -> Result<Self, WinError> {
+    /// Create the icon showing `state`.
+    ///
+    /// The state is passed in rather than assumed, because the tray now appears in conditions
+    /// that used to end the process before it existed — a held shortcut, or too few layouts.
+    /// Coming up in the enabled icon and correcting itself afterwards would flash the wrong
+    /// answer at exactly the moment the user is being told something is wrong.
+    pub fn new(hwnd: HWND, state: &AgentState) -> Result<Self, WinError> {
         let mut data = Self::base(hwnd);
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        // The tray starts enabled; nothing has had a chance to disable it yet.
-        data.hIcon = load_icon(State::Enabled)?;
-        write_wide(&mut data.szTip, tooltip);
+        data.hIcon = load_icon(state)?;
+        write_wide(&mut data.szTip, &state.summary());
 
         // SAFETY: `data` is fully initialised and its cbSize field matches the struct.
         unsafe {
@@ -123,19 +127,15 @@ impl Tray {
     /// the hotkey does not convert — a distinction the tooltip has to make, because a user
     /// who remembers the old behaviour will otherwise read "disabled" as "no longer
     /// watching", which was never something they had to turn off.
-    pub fn set_state(&self, state: State) {
+    pub fn set_state(&self, state: &AgentState) {
         let Ok(icon) = load_icon(state) else { return };
         let mut data = Self::base(self.hwnd);
         // NIF_MESSAGE on every modify, or this call silently unhooks the icon.
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         data.hIcon = icon;
-        write_wide(
-            &mut data.szTip,
-            match state {
-                State::Enabled => "LexiSwitch",
-                State::Disabled => "LexiSwitch — disabled, the hotkey does not convert",
-            },
-        );
+        // The state writes its own tooltip, including the active shortcut where there is one:
+        // a tray icon that does not say how to invoke the program teaches nothing.
+        write_wide(&mut data.szTip, &state.summary());
         // SAFETY: modifies the icon this type added.
         unsafe {
             let _ = Shell_NotifyIconW(NIM_MODIFY, &data);
@@ -147,14 +147,26 @@ impl Tray {
     /// `SetForegroundWindow` before `TrackPopupMenu` is not optional: without it the menu
     /// does not dismiss when the user clicks elsewhere, and stays on screen forever. This is
     /// a documented quirk of tray menus.
-    pub fn show_menu(&self, state: State) -> Option<MenuCommand> {
+    pub fn show_menu(&self, state: &AgentState) -> Option<MenuCommand> {
         // SAFETY: the menu is created, used and destroyed within this call. Every pointer
         // passed is to a local that outlives the call.
         unsafe {
             let menu = CreatePopupMenu().ok()?;
-            let toggle = match state {
-                State::Enabled => w!("Disable LexiSwitch"),
-                State::Disabled => w!("Enable LexiSwitch"),
+            // Conversion from the menu, first because it is the only way to convert while the
+            // shortcut is held by another application. Not a convenience: without it a conflict
+            // leaves a program that runs and can do nothing at all.
+            let _ = AppendMenuW(
+                menu,
+                if state.converts() { MF_STRING } else { MF_GRAYED },
+                MenuCommand::ConvertSelection as usize,
+                w!("Convert selection"),
+            );
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+            let toggle = if matches!(state, AgentState::Disabled) {
+                w!("Enable LexiSwitch")
+            } else {
+                w!("Disable LexiSwitch")
             };
             let _ = AppendMenuW(menu, MF_STRING, MenuCommand::EnableDisable as usize, toggle);
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());

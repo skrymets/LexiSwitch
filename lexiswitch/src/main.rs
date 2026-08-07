@@ -85,7 +85,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         tray.notify(
             "Some settings were ignored",
             &format!(
-                "{} is not a setting this version has. It was ignored and everything else                  was applied. Check the spelling if you did not expect this.",
+                "{} is not a setting this version has. It was ignored and everything else was \
+                 applied. Check the spelling if you did not expect this.",
                 ignored_at_startup.join(", ")
             ),
         );
@@ -103,7 +104,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // Anything the worker finished gets reported here, on the thread that owns the tray.
         while let Ok(outcome) = outcomes.try_recv() {
             match outcome {
-                Outcome::Quiet => log.note("outcome_quiet"),
+                Outcome::Quiet { note } => log.note(note),
                 Outcome::Note { title, body } => {
                     log.note("outcome_note");
                     tray.notify(&title, &body);

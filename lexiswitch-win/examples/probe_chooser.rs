@@ -76,7 +76,13 @@ fn main() {
         }
     };
     let tables: Vec<_> = installed.iter().map(|l| l.table.clone()).collect();
-    let found = candidates::generate(SOURCE, &tables, Some("en-US"));
+    // `--empty` shows the state where the selection read fine and no layout changes it. It is
+    // a state of the chooser, not a refusal to open one, so it has to be looked at.
+    let found = if std::env::args().any(|a| a == "--empty") {
+        Vec::new()
+    } else {
+        candidates::generate(SOURCE, &tables, Some("en-US"))
+    };
 
     say!("probe_chooser — {} candidates", found.len());
     for (i, c) in found.iter().enumerate() {
@@ -87,10 +93,6 @@ fn main() {
             c.unchanged,
             c.text.chars().take(28).collect::<String>()
         );
-    }
-    if found.is_empty() {
-        say!("nothing to choose between; the chooser is not opened for this case");
-        return;
     }
     say!();
 

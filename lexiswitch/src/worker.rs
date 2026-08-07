@@ -45,8 +45,9 @@ pub enum Job {
 
 /// What happened, for the message-loop thread to show in the tray.
 pub enum Outcome {
-    /// Nothing worth telling the user about.
-    Quiet,
+    /// Nothing worth interrupting the user about. `note` is what the log records, so the
+    /// silent endings stay distinguishable from each other without a balloon for each.
+    Quiet { note: &'static str },
     /// Something worked, and the user should know a side effect occurred.
     Note { title: String, body: String },
     /// Something did not happen. The body says what.
@@ -124,7 +125,7 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                     5,
                 ) {
                     Err(e) => Outcome::Failed {
-                        title: "Selection not converted".into(),
+                        title: "Selection could not be read".into(),
                         body: e.to_string(),
                     },
                     Ok(transaction) => {
@@ -133,59 +134,48 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                             &tables,
                             active.as_deref(),
                         );
-                        if found.is_empty() {
-                            // A real answer, and a different one from a failure: the selection
-                            // was read fine, and no installed layout pair changes it. No window
-                            // is opened, because there is nothing to choose between.
-                            let cancelled = transaction.cancel();
-                            Outcome::Failed {
-                                title: "No conversion found".into(),
-                                body: match cancelled {
-                                    Ok(()) => "No installed keyboard layout converts the \
-                                               selected text into anything different."
-                                        .into(),
-                                    Err(e) => format!(
-                                        "No installed keyboard layout converts the selected \
-                                         text into anything different. Additionally: {e}"
-                                    ),
-                                },
+                        // Opened even when nothing was found. "No conversion found" is a
+                        // result, not a failure, and the spec puts feedback about a
+                        // transaction inside the transaction rather than in a balloon
+                        // afterwards. The chooser blocks this thread until the user decides,
+                        // which is why it runs here and not on the message loop: the tray has
+                        // to stay alive while a chooser is open.
+                        let empty = found.is_empty();
+                        match chooser::show(transaction.original(), &found, active.as_deref()) {
+                            Err(e) => {
+                                // The window could not take the foreground, so it could never
+                                // have been typed into. Nothing was modified.
+                                let _ = transaction.cancel();
+                                Outcome::Failed {
+                                    title: "Chooser did not open".into(),
+                                    body: e.to_string(),
+                                }
                             }
-                        } else {
-                            // The chooser blocks this thread until the user decides. That is
-                            // why it runs here and not on the message loop: the tray has to
-                            // stay alive while a chooser is open.
-                            match chooser::show(
-                                transaction.original(),
-                                &found,
-                                active.as_deref(),
-                            ) {
-                                Err(e) => {
-                                    // The window could not take the foreground, so it could
-                                    // never have been typed into. Nothing was modified.
-                                    let _ = transaction.cancel();
-                                    Outcome::Failed {
-                                        title: "Chooser did not open".into(),
-                                        body: e.to_string(),
-                                    }
-                                }
-                                Ok(Decision::Cancel) => match transaction.cancel() {
-                                    Ok(()) => Outcome::Quiet,
-                                    Err(e) => Outcome::Failed {
-                                        title: "Cancelled, with a loose end".into(),
-                                        body: e.to_string(),
-                                    },
+                            Ok(Decision::Cancel) => match transaction.cancel() {
+                                // Two different quiet endings, told apart in the log rather
+                                // than by interrupting the user about something they either
+                                // chose or can see for themselves.
+                                Ok(()) if empty => Outcome::Quiet {
+                                    note: "outcome_no_conversion",
                                 },
-                                Ok(Decision::Apply { index }) => {
-                                    apply(transaction, &found[index], None)
-                                }
-                                Ok(Decision::ApplyAndSwitch { index }) => {
-                                    let candidate = &found[index];
-                                    let hkl = handles
-                                        .iter()
-                                        .find(|(name, _)| *name == candidate.to)
-                                        .map(|(_, hkl)| *hkl);
-                                    apply(transaction, candidate, hkl)
-                                }
+                                Ok(()) => Outcome::Quiet {
+                                    note: "outcome_cancelled",
+                                },
+                                Err(e) => Outcome::Failed {
+                                    title: "Cancelled, with a loose end".into(),
+                                    body: e.to_string(),
+                                },
+                            },
+                            Ok(Decision::Apply { index }) => {
+                                apply(transaction, &found[index], None)
+                            }
+                            Ok(Decision::ApplyAndSwitch { index }) => {
+                                let candidate = &found[index];
+                                let hkl = handles
+                                    .iter()
+                                    .find(|(name, _)| *name == candidate.to)
+                                    .map(|(_, hkl)| *hkl);
+                                apply(transaction, candidate, hkl)
                             }
                         }
                     }
@@ -218,7 +208,7 @@ fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<u32>
         // can before returning the error.
         Err(e) => {
             return Outcome::Failed {
-                title: "Selection not converted".into(),
+                title: "Replacement failed".into(),
                 body: e.to_string(),
             }
         }
@@ -248,7 +238,9 @@ fn apply(transaction: Transaction, candidate: &Candidate, switch_to: Option<u32>
     });
 
     match (switch_note, clipboard_note) {
-        (None, None) => Outcome::Quiet,
+        (None, None) => Outcome::Quiet {
+            note: "outcome_applied",
+        },
         (switch, clip) => Outcome::Note {
             title: format!("Converted, {label}"),
             body: [switch, clip]

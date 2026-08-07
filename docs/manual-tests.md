@@ -529,3 +529,37 @@ not expect the removal to demonstrate a benefit.
 Recorded in full in [`spikes/2026-08-05-windows-input-primitives.md`](spikes/2026-08-05-windows-input-primitives.md).
 Keystrokes typed into an elevated window are not delivered to an unelevated LexiSwitch at
 all, so correction silently does nothing there. Accepted limitation, noted in ADR-0003.
+
+---
+
+## Resident memory and network, an hour idle (tasks 6.3 and 6.4)
+
+**Measured 2026-08-07** against `target\release\lexiswitch.exe` at commit `9b22ea2`, sampled
+every five minutes for an hour. The later chooser-activation fix (`a98911c`) touches only the
+window's handling of `WM_ACTIVATE` and nothing on the idle path.
+
+| | working set | private working set | handles |
+|---|---|---|---|
+| idle, before any conversion | 13.7 MB | 1.7 MB | 182 |
+| after one conversion, held 30 min | 22.2 → 21.9 MB | 2.9 → 2.5 MB | 287 |
+
+**No leak.** Across the half hour following a conversion every figure is flat or drifting
+slightly *down*, and the handle count does not move. Nothing accumulates per conversion.
+
+**The 20 MB budget is exceeded on working set, and met with two decimal orders of margin on
+private bytes.** The step at the first conversion is UI Automation and the shell being mapped
+in — `uiautomationcore.dll` (4.1 MB), `shell32.dll` (7.6 MB) and `windows.storage.dll`
+(8.6 MB) account for most of it. Those are shared pages, already resident for every process on
+the machine, so they cost the system nothing extra; they are counted against this process
+because working set counts what is mapped, not what is paid for.
+
+So the honest answer depends on a question the budget does not currently ask: **which measure
+does "resident memory under 20 MB" mean?** On `WorkingSet64`, the number a user reads in Task
+Manager, this fails at ~22 MB. On private working set it passes at 2.5 MB. Both are recorded
+rather than picking the flattering one. The budget should be restated to name its measure
+before this task is called passed or failed — it cannot be settled by measuring harder.
+
+**No outbound connection.** Every sample reported `net=none`: no TCP connection to any
+non-loopback address, and no UDP endpoint, across the whole hour including the conversions.
+This is the runtime observation task 6.4 asks for, and it agrees with the import-table evidence
+already recorded above — the binary links no networking library at all.

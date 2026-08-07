@@ -36,12 +36,12 @@ fixtures.
 
 ## 4. Commit, cancel and outcomes
 
-- [ ] 4.1 Apply: replace the selection, leave the active layout alone, restore focus, close
-- [ ] 4.2 Apply and switch: additionally request the candidate's target layout, and report a switch that could not be confirmed
-- [ ] 4.3 Cancel: change nothing, restore the clipboard, restore focus, discard the transaction
-- [ ] 4.4 Distinguish the six outcomes — success, cancellation, no valid conversion, selection unreadable, replacement failed, layout switch unconfirmed
-- [ ] 4.5 Never report success when replacement failed or cannot be assumed to have succeeded
-- [ ] 4.6 Show the no-conversion state in the chooser, distinguishable from a failure
+- [x] 4.1 Apply: replace the selection, leave the active layout alone, restore focus, close
+- [x] 4.2 Apply and switch: additionally request the candidate's target layout, and report a switch that could not be confirmed
+- [x] 4.3 Cancel: change nothing, restore the clipboard, restore focus, discard the transaction
+- [x] 4.4 Distinguish the six outcomes — success, cancellation, no valid conversion, selection unreadable, replacement failed, layout switch unconfirmed
+- [x] 4.5 Never report success when replacement failed or cannot be assumed to have succeeded
+- [x] 4.6 Show the no-conversion state in the chooser, distinguishable from a failure
 - [ ] 4.7 **Milestone:** every outcome reachable by hand, each visibly different from the others
 
 ## 5. Retire the old direction logic
@@ -58,10 +58,10 @@ fixtures.
 
 ## 6. Privacy
 
-- [ ] 6.1 Confirm no original text, candidate or preview is written to a log at any level
-- [ ] 6.2 Confirm nothing from a transaction is retained after it closes
-- [ ] 6.3 Keep the clipboard's exposure to the shortest window the replacement path allows, restoring prior contents
-- [ ] 6.4 Check that no user-facing text claims clipboard content cannot reach Clipboard History — the exclusion formats request it, they do not guarantee it
+- [x] 6.1 Confirm no original text, candidate or preview is written to a log at any level
+- [x] 6.2 Confirm nothing from a transaction is retained after it closes
+- [x] 6.3 Keep the clipboard's exposure to the shortest window the replacement path allows, restoring prior contents
+- [x] 6.4 Check that no user-facing text claims clipboard content cannot reach Clipboard History — the exclusion formats request it, they do not guarantee it
 
 ## 7. Verification
 

@@ -126,18 +126,15 @@ struct Chooser<'a> {
 /// window closing, or focus moving elsewhere — because the transaction's default has to be
 /// "change nothing" for the promise above to mean anything.
 ///
-/// `candidates` must not be empty. A selection that yields nothing is a distinct outcome the
-/// caller reports without opening a window; there is nothing here for the user to choose
-/// between.
+/// An empty `candidates` is a state, not an error: the chooser opens and says that no distinct
+/// conversion was found. The spec requires feedback about a transaction to appear *in* the
+/// transaction, and requires that outcome to be distinguishable from a failure — a balloon
+/// after the window declined to open is neither.
 pub fn show(
     original: &str,
     candidates: &[Candidate],
     active: Option<&str>,
 ) -> Result<Decision, WinError> {
-    debug_assert!(!candidates.is_empty(), "the caller reports the empty case");
-    if candidates.is_empty() {
-        return Ok(Decision::Cancel);
-    }
 
     // SAFETY: the class name is a static wide string with a NUL and the WNDCLASSW is fully
     // initialised before registration. A zero return means the class is already registered by
@@ -413,7 +410,8 @@ fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
     let width = 760 * scale;
     let pad = 14 * scale;
     let line = state.line_height;
-    let rows = state.candidates.len() as i32;
+    // One line either way: with no candidates that line carries the explanation.
+    let rows = (state.candidates.len() as i32).max(2);
     // Every term matches a step the paint takes, in the same order, so the two cannot drift:
     // padding, title, gap, original, gap, rule, gap, rows, rule, gap, two footer lines, padding.
     let height = pad
@@ -462,6 +460,14 @@ fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
 impl Chooser<'_> {
     /// Apply a key press. Returns whether anything changed and the window needs repainting.
     fn key(&mut self, vk: usize, ctrl: bool) -> bool {
+        if self.candidates.is_empty() {
+            // Nothing to move between and nothing to apply. Any key that means "done" closes
+            // it; everything else is ignored rather than silently doing something else.
+            if matches!(vk, VK_ESCAPE_U | VK_RETURN_U | VK_SPACE_U) {
+                self.decision = Some(Decision::Cancel);
+            }
+            return false;
+        }
         match vk {
             VK_ESCAPE_U => {
                 self.decision = Some(Decision::Cancel);
@@ -592,7 +598,9 @@ impl Chooser<'_> {
         y += 8 * scale;
 
         // --- body --------------------------------------------------------------------
-        if self.expanded {
+        if self.candidates.is_empty() {
+            y = self.paint_nothing(hdc, pad, y, inner, text_colour, dim);
+        } else if self.expanded {
             y = self.paint_expanded(hdc, pad, y, inner, client, text_colour, dim);
         } else {
             y = self.paint_list(hdc, pad, y, inner, full, text_colour, dim);
@@ -601,6 +609,14 @@ impl Chooser<'_> {
         // --- footer ------------------------------------------------------------------
         self.rule(hdc, pad, y, full - pad);
         y += 8 * scale;
+        if self.candidates.is_empty() {
+            self.draw(hdc, "Esc close", pad, y, inner, dim, false);
+            // SAFETY: restoring the object that was selected before this function ran.
+            unsafe {
+                SelectObject(hdc, previous);
+            }
+            return;
+        }
         let target = &self.candidates[self.selected].to;
         self.draw(
             hdc,
@@ -632,6 +648,36 @@ impl Chooser<'_> {
         unsafe {
             SelectObject(hdc, previous);
         }
+    }
+
+    /// The state where the selection was read perfectly well and no conversion changes it.
+    ///
+    /// Deliberately worded as a result rather than a problem. Nothing failed here: every
+    /// installed layout was tried and each produced the text that is already there, which is
+    /// most often what happens when the text was never mistyped in the first place.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_nothing(
+        &self,
+        hdc: HDC,
+        pad: i32,
+        mut y: i32,
+        inner: i32,
+        text_colour: COLORREF,
+        dim: COLORREF,
+    ) -> i32 {
+        self.draw(hdc, "No conversion found", pad, y, inner, text_colour, true);
+        y += self.line_height;
+        self.draw(
+            hdc,
+            "Every installed layout produces the text that is already there. Nothing was \
+             changed.",
+            pad,
+            y,
+            inner,
+            dim,
+            false,
+        );
+        y + self.line_height + 4 * self.scale
     }
 
     /// One row per candidate.

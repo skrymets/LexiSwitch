@@ -78,10 +78,16 @@ fn main() {
     let tables: Vec<_> = installed.iter().map(|l| l.table.clone()).collect();
     // `--empty` shows the state where the selection read fine and no layout changes it. It is
     // a state of the chooser, not a refusal to open one, so it has to be looked at.
+    let long = std::env::args().any(|a| a == "--long");
+    let source = if long {
+        std::iter::repeat_n(SOURCE, 12).collect::<Vec<_>>().join(" ")
+    } else {
+        SOURCE.to_string()
+    };
     let found = if std::env::args().any(|a| a == "--empty") {
         Vec::new()
     } else {
-        candidates::generate(SOURCE, &tables, Some("en-US"))
+        candidates::generate(&source, &tables, Some("en-US"))
     };
 
     say!("probe_chooser — {} candidates", found.len());
@@ -118,7 +124,7 @@ fn main() {
         say!("  drive it yourself: arrows, Space, Enter, Ctrl+Enter, Esc");
     }
 
-    match chooser::show(SOURCE, &found, Some("en-US")) {
+    match chooser::show(&source, &found, Some("en-US")) {
         Ok(decision) => {
             say!();
             say!("  decision: {decision:?}");

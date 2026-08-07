@@ -38,29 +38,34 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect,
-    GetDC, GetDeviceCaps, GetMonitorInfoW, GetSysColor, GetTextMetricsW, InvalidateRect,
-    MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY,
-    COLOR_BTNFACE,
-    COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT,
-    DEFAULT_CHARSET, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_WORDBREAK,
-    FF_DONTCARE, FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, LOGPIXELSY,
-    MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, PAINTSTRUCT, TEXTMETRICW, TRANSPARENT,
+    GetDC, GetDeviceCaps, GetMonitorInfoW, GetSysColor, GetTextMetricsW, IntersectClipRect,
+    InvalidateRect, MonitorFromWindow, ReleaseDC, RestoreDC, SaveDC, SelectObject, SetBkMode,
+    SetTextColor, CLEARTYPE_QUALITY, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT,
+    COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, DEFAULT_CHARSET, DT_CALCRECT,
+    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, DT_WORDBREAK, FF_DONTCARE,
+    FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, LOGPIXELSY, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, PAINTSTRUCT, TEXTMETRICW, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, SetFocus, VK_CONTROL};
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId, LoadCursorW,
-    RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage,
+    GetClientRect, GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowThreadProcessId,
+    LoadCursorW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, TranslateMessage,
     CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WA_INACTIVE, WM_ACTIVATE, WM_CLOSE,
-    WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WNDCLASSW, WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WM_KEYDOWN, WM_NCCREATE, WM_PAINT, WNDCLASSW,
+    WS_BORDER, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_POPUP,
 };
 
 use crate::WinError;
 
 const CLASS_NAME: PCWSTR = w!("LexiSwitchChooser");
+
+/// How many wrapped lines the expanded view shows before it has to scroll.
+const EXPANDED_LINES: i32 = 10;
 
 /// Virtual-key codes, as plain integers because that is what `WM_KEYDOWN` delivers.
 const VK_ESCAPE_U: usize = 0x1B;
@@ -98,6 +103,9 @@ struct Chooser<'a> {
     selected: usize,
     /// Whether the selected candidate is shown in full instead of the list.
     expanded: bool,
+    /// Set when a toggle changed how tall the window needs to be, so the window procedure can
+    /// resize it before repainting.
+    resized: bool,
     /// First visible line of the expanded view.
     scroll: usize,
     decision: Option<Decision>,
@@ -112,8 +120,16 @@ struct Chooser<'a> {
     armed: bool,
     font: HFONT,
     bold: HFONT,
-    /// Pixel height of one line of text, measured from the font rather than assumed.
+    /// Pixel height of one row in the candidate list: the font's height plus breathing room.
     line_height: i32,
+    /// Pixel height of one *wrapped* line as `DrawTextW` lays it out — the font's height plus
+    /// its external leading, with none of the row padding.
+    ///
+    /// Kept apart from `line_height` because the expanded view scrolls and clips against lines
+    /// that GDI positions, not rows this code positions. Using the padded value there stepped
+    /// the scroll further than one line and put the clip boundary in the middle of a line,
+    /// leaving a half-drawn row that reads as corruption.
+    text_line: i32,
     /// Approximate pixel width of one character, for turning a pixel width into the character
     /// count [`compact`] works in.
     char_width: i32,
@@ -158,19 +174,21 @@ pub fn show(
 
     let scale = dpi_scale();
     let (font, bold) = fonts(scale);
-    let (line_height, char_width) = metrics(font, scale);
+    let (line_height, text_line, char_width) = metrics(font, scale);
     let mut state = Chooser {
         original,
         candidates,
         active,
         selected: 0,
         expanded: false,
+        resized: false,
         scroll: 0,
         decision: None,
         armed: false,
         font,
         bold,
         line_height,
+        text_line,
         char_width,
         scale,
     };
@@ -376,12 +394,12 @@ fn fonts(scale: i32) -> (HFONT, HFONT) {
 /// footer: the layout advanced by the font's real line height while the window had been sized
 /// with a guess, so the last line fell outside the client area and the target layout that
 /// task 3.7 requires be named was drawn off the bottom edge.
-fn metrics(font: HFONT, scale: i32) -> (i32, i32) {
+fn metrics(font: HFONT, scale: i32) -> (i32, i32, i32) {
     // SAFETY: a null window handle asks for a DC covering the whole screen, which is a valid
     // request and needs no window to exist yet.
     let hdc = unsafe { GetDC(None) };
     if hdc.is_invalid() {
-        return (22 * scale, 8 * scale);
+        return (22 * scale, 16 * scale, 8 * scale);
     }
     let mut tm = TEXTMETRICW::default();
     // SAFETY: `hdc` is the screen DC just obtained and `tm` lives for the whole call. The
@@ -394,9 +412,13 @@ fn metrics(font: HFONT, scale: i32) -> (i32, i32) {
         ok
     };
     if measured {
-        (tm.tmHeight + 8 * scale, tm.tmAveCharWidth.max(1))
+        (
+            tm.tmHeight + 8 * scale,
+            (tm.tmHeight + tm.tmExternalLeading).max(1),
+            tm.tmAveCharWidth.max(1),
+        )
     } else {
-        (22 * scale, 8 * scale)
+        (22 * scale, 16 * scale, 8 * scale)
     }
 }
 
@@ -408,25 +430,7 @@ fn metrics(font: HFONT, scale: i32) -> (i32, i32) {
 fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
     let scale = state.scale;
     let width = 760 * scale;
-    let pad = 14 * scale;
-    let line = state.line_height;
-    // One line either way: with no candidates that line carries the explanation.
-    let rows = (state.candidates.len() as i32).max(2);
-    // Every term matches a step the paint takes, in the same order, so the two cannot drift:
-    // padding, title, gap, original, gap, rule, gap, rows, rule, gap, two footer lines, padding.
-    let height = pad
-        + line
-        + 4 * scale
-        + line
-        + 6 * scale
-        + 1.max(scale)
-        + 8 * scale
-        + rows * line
-        + 4 * scale
-        + 1.max(scale)
-        + 8 * scale
-        + line * 2
-        + pad;
+    let height = state.height_for(state.expanded);
 
     // SAFETY: no preconditions; a null foreground window resolves to the nearest monitor,
     // which for a null handle is the primary one.
@@ -458,6 +462,38 @@ fn geometry(state: &Chooser) -> (i32, i32, i32, i32) {
 }
 
 impl Chooser<'_> {
+    /// How tall the window has to be in the given mode.
+    ///
+    /// Every term matches a step the paint takes, in the same order, so the two cannot drift.
+    /// This is what stopped the footer being clipped: the layout advances by measured text
+    /// metrics, so the height must be built from the same ones rather than from round numbers.
+    fn height_for(&self, expanded: bool) -> i32 {
+        let scale = self.scale;
+        let pad = 14 * scale;
+        let line = self.line_height;
+        let body = if expanded {
+            // The candidate's own heading, room for a useful number of wrapped lines, and the
+            // scroll position. Without this the window kept its list height and "expanded"
+            // showed a single line, which is not an expansion of anything.
+            line + EXPANDED_LINES * self.text_line + line
+        } else {
+            // One line either way: with no candidates that line carries the explanation.
+            (self.candidates.len() as i32).max(2) * line
+        };
+        pad + line
+            + 4 * scale
+            + line
+            + 6 * scale
+            + 1.max(scale)
+            + 8 * scale
+            + body
+            + 4 * scale
+            + 1.max(scale)
+            + 8 * scale
+            + line * 2
+            + pad
+    }
+
     /// Apply a key press. Returns whether anything changed and the window needs repainting.
     fn key(&mut self, vk: usize, ctrl: bool) -> bool {
         if self.candidates.is_empty() {
@@ -488,6 +524,7 @@ impl Chooser<'_> {
             VK_SPACE_U => {
                 self.expanded = !self.expanded;
                 self.scroll = 0;
+                self.resized = true;
                 true
             }
             // While expanded the arrows scroll the text; the selection is not moving, so the
@@ -539,7 +576,16 @@ impl Chooser<'_> {
     }
 
     /// Draw the whole window.
-    fn paint(&self, hdc: HDC, client: RECT) {
+    fn paint(&mut self, hwnd: HWND, hdc: HDC) {
+        // The client rect, never the damaged rectangle. `BeginPaint` reports only the
+        // region that needs repainting, and laying the window out against that would
+        // place everything relative to whatever happened to be invalidated.
+        let mut client = RECT::default();
+        // SAFETY: `client` lives for the whole call and `hwnd` is alive while its own
+        // window procedure runs.
+        if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
+            return;
+        }
         let scale = self.scale;
         let pad = 14 * scale;
 
@@ -766,7 +812,7 @@ impl Chooser<'_> {
     /// The selected candidate in full, wrapped and scrollable.
     #[allow(clippy::too_many_arguments)]
     fn paint_expanded(
-        &self,
+        &mut self,
         hdc: HDC,
         pad: i32,
         y: i32,
@@ -777,7 +823,13 @@ impl Chooser<'_> {
     ) -> i32 {
         let scale = self.scale;
         let candidate = &self.candidates[self.selected];
-        let bottom = client.bottom - (58 * scale);
+        // Where the body has to stop: the footer's two lines, its rule, and the padding under
+        // it, plus one line kept back for the scroll position. That line is reserved whether or
+        // not there is anything to scroll, so the text does not shift under the reader the
+        // moment the indicator appears.
+        let footer = self.line_height * 2 + 8 * scale + 1.max(scale) + 14 * scale;
+        let indicator_y = client.bottom - footer - self.line_height;
+        let bottom = indicator_y;
 
         self.draw(
             hdc,
@@ -793,23 +845,78 @@ impl Chooser<'_> {
         );
         let top = y + self.line_height;
 
-        // Scrolling by shifting the rectangle upward and letting DrawTextW clip is what keeps
-        // this to one call: no line breaking of our own, and no wrapping logic to disagree
-        // with the one GDI already applies.
-        let mut rect = RECT {
+        let mut wide: Vec<u16> = candidate.text.encode_utf16().collect();
+
+        // How tall the wrapped text is, asked of the same function that will draw it so the
+        // two cannot disagree about where the lines break.
+        let mut measured = RECT {
             left: pad,
-            top: top - (self.scroll as i32 * self.line_height),
+            top,
             right: client.right - pad,
             bottom,
         };
-        let mut wide: Vec<u16> = candidate.text.encode_utf16().collect();
-        // SAFETY: `wide` and `rect` both live for the whole call. DT_WORDBREAK may rewrite the
-        // buffer only under DT_MODIFYSTRING, which is not passed.
+        // SAFETY: `wide` and `measured` live for the whole call. DT_CALCRECT only measures —
+        // it draws nothing — and the buffer is rewritten only under DT_MODIFYSTRING, which is
+        // not passed.
         unsafe {
+            DrawTextW(
+                hdc,
+                &mut wide,
+                &mut measured,
+                DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
+            );
+        }
+
+        // Clamp the scroll so it cannot run off the end into blank space. One line is always
+        // left visible, so scrolling never empties the view.
+        let visible = ((bottom - top) / self.text_line).max(1);
+        let total = ((measured.bottom - measured.top) / self.text_line).max(1);
+        let max_scroll = (total - visible).max(0) as usize;
+        self.scroll = self.scroll.min(max_scroll);
+
+        // Clip to a whole number of lines. Stopping partway through one leaves a sliced row of
+        // half-glyphs, which looks like a drawing fault rather than like more text below.
+        let clipped_bottom = top + visible * self.text_line;
+
+        let mut rect = RECT {
+            left: pad,
+            top: top - (self.scroll as i32 * self.text_line),
+            right: client.right - pad,
+            bottom: clipped_bottom,
+        };
+
+        // Clipped to the body, because DrawTextW does not do it. It honours the *bottom* of
+        // its rectangle but happily draws above the top — and scrolling works by moving the
+        // top upward, so the text was being painted straight over the header line above it.
+        // The DC state is saved and restored rather than the clip merely being widened again,
+        // since IntersectClipRect only ever narrows.
+        //
+        // SAFETY: `hdc` is valid for this paint; SaveDC's return is passed back to RestoreDC
+        // unchanged, and `wide`/`rect` live across the DrawTextW call.
+        unsafe {
+            let saved = SaveDC(hdc);
+            IntersectClipRect(hdc, pad, top, client.right - pad, clipped_bottom);
             SetTextColor(hdc, text_colour);
             DrawTextW(hdc, &mut wide, &mut rect, DT_WORDBREAK | DT_NOPREFIX);
+            if saved != 0 {
+                let _ = RestoreDC(hdc, saved);
+            }
         }
-        bottom + 4 * scale
+
+        // Say so when there is more text than fits, rather than leaving the user to discover
+        // it by pressing an arrow and watching nothing happen.
+        if max_scroll > 0 {
+            self.draw(
+                hdc,
+                &format!("line {} of {}", self.scroll + 1, max_scroll + 1),
+                pad,
+                indicator_y,
+                inner,
+                dim,
+                false,
+            );
+        }
+        indicator_y + self.line_height + 4 * scale
     }
 
     /// One line of text in a fixed box, clipped with an ellipsis if it somehow overflows.
@@ -938,7 +1045,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // window and structure, as the API requires.
             unsafe {
                 let hdc = BeginPaint(hwnd, &mut ps);
-                state.paint(hdc, ps.rcPaint);
+                state.paint(hwnd, hdc);
                 let _ = EndPaint(hwnd, &ps);
             }
             LRESULT(0)
@@ -947,6 +1054,26 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // SAFETY: no preconditions; reports the current state of one virtual key.
             let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
             if state.key(wp.0, ctrl) {
+                if std::mem::take(&mut state.resized) {
+                    // Grown or shrunk to fit the mode just switched into. The top-left corner
+                    // stays put: re-centring on every toggle would move the window out from
+                    // under the reader's eye for no gain.
+                    let height = state.height_for(state.expanded);
+                    // SAFETY: resizing a window this thread owns, which is alive for the
+                    // duration of its own window procedure. A failure is reported as a bool
+                    // and leaves the window at its previous size, which still paints.
+                    unsafe {
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            0,
+                            0,
+                            760 * state.scale,
+                            height,
+                            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                }
                 // SAFETY: invalidating the whole client area of a window that is alive for the
                 // duration of this call.
                 unsafe {

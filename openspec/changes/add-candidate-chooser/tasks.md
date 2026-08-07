@@ -31,6 +31,10 @@ fixtures.
 - [x] 3.4 Show unchanged-character counts where a candidate converts only part of the selection
 - [x] 3.5 Compact previews with visible truncation, favouring a region containing changed text
 - [x] 3.6 Expand and collapse the selected candidate, with keyboard scrolling, inside the same transaction
+      *The window grows on expand and shrinks on collapse. Scrolling clips to the body and steps
+      whole rendered lines: `DrawTextW` honours a rectangle's bottom but draws happily above its
+      top, so the unclipped version painted the body over the header the moment an arrow was
+      pressed.*
 - [x] 3.7 Display the target layout that a layout-changing commit would activate
 - [x] 3.8 **Milestone:** the chooser is fully navigable from the keyboard with the mouse unplugged
 

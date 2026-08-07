@@ -12,8 +12,7 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICONDATAW_0, NOTIFYICON_VERSION_4,
-    NOTIFY_ICON_INFOTIP_FLAGS,
+    NOTIFYICONDATAW, NOTIFYICONDATAW_0, NOTIFY_ICON_INFOTIP_FLAGS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, PostMessageW,
@@ -47,15 +46,24 @@ fn load_icon(state: State) -> Result<HICON, WinError> {
 
 /// Message the tray icon posts back to the window for clicks.
 ///
-/// Under the version 4 protocol the notification event is in the **low word** of `lParam`;
-/// the high word carries the icon id and `wParam` carries the cursor position. Use
-/// [`tray_event`] rather than comparing `lParam` directly.
+/// The icon uses the **legacy** protocol: `wParam` is the icon id and `lParam` is the mouse
+/// message. `NIM_SETVERSION` with `NOTIFYICON_VERSION_4` was tried and reverted, because it
+/// costs the tooltip. Under version 4 the shell stops drawing `szTip` and instead sends
+/// `NIN_POPUPOPEN` so the application can render its own — measured directly with
+/// `examples/probe_tray.rs`, which registered three icons side by side and watched what the
+/// shell sent each: the version 4 icon received seven `NIN_POPUPOPEN` events and showed no
+/// tooltip, while both legacy icons showed theirs.
+///
+/// Version 4 buys nothing here in exchange. The measurement also settled the question it was
+/// introduced to answer: the shell delivers `WM_RBUTTONUP` under *either* protocol, including
+/// to a message-only window. Right-clicks were never being lost.
 pub const WM_TRAY: u32 = WM_APP + 1;
 
 /// The notification event out of a [`WM_TRAY`] message's `lParam`.
 ///
-/// Exists so callers cannot accidentally compare the whole `lParam`, which under version 4
-/// contains the icon id in its high word and therefore never equals a bare message constant.
+/// Under the legacy protocol the whole `lParam` is the event, so the mask is a no-op — it is
+/// kept because it is also correct under version 4, where the high word carries the icon id
+/// and a bare comparison silently never matches.
 pub fn tray_event(lparam: isize) -> u32 {
     (lparam as u32) & 0xFFFF
 }
@@ -102,16 +110,6 @@ impl Tray {
             Shell_NotifyIconW(NIM_ADD, &data)
                 .ok()
                 .map_err(|e| WinError::new("Shell_NotifyIconW(NIM_ADD)", e))?;
-
-            // Opt into the version 4 protocol. Without this the icon keeps the Windows 95
-            // behaviour, and on Windows 11 that was observed never delivering a right-click to
-            // the window at all — the menu could be opened by posting the message by hand, but
-            // the shell never sent one. Version 4 also moves the event into the low word of
-            // `lParam` and puts the cursor position in `wParam`, which is why the handler must
-            // mask rather than compare the whole value.
-            Shell_NotifyIconW(NIM_SETVERSION, &data)
-                .ok()
-                .map_err(|e| WinError::new("Shell_NotifyIconW(NIM_SETVERSION)", e))?;
         }
         Ok(Self { hwnd })
     }
@@ -217,9 +215,9 @@ impl Tray {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: ICON_ID,
-            Anonymous: NOTIFYICONDATAW_0 {
-                uVersion: NOTIFYICON_VERSION_4,
-            },
+            // Left at zero: the legacy protocol. See `new` for why version 4 was tried and
+            // taken back out.
+            Anonymous: NOTIFYICONDATAW_0 { uVersion: 0 },
             ..Default::default()
         }
     }

@@ -324,6 +324,46 @@ manual testing.
 > [`environment.md`](environment.md) §6 on the grounds that the binary is not distributed,
 > is a plausible cause that the pivot does not touch.
 
+### What the shell actually sends a tray icon
+
+**Observed 2026-08-07.** Three fixes to the tray menu in a row each addressed a real defect
+and none of them made a right-click work. `examples/probe_tray.rs` settled it by registering
+three icons at once and logging every callback the shell delivered to each.
+
+| Icon | Window | Protocol | Tooltip | Right-click delivered |
+|---|---|---|---|---|
+| A | message-only | legacy | yes | 3 × `WM_RBUTTONUP` |
+| B | top-level | legacy | yes | 2 × `WM_RBUTTONUP` |
+| C | top-level | version 4 | **no** | 3 × `WM_CONTEXTMENU` |
+
+758 callbacks in total. Two things follow, and both contradict what had been assumed.
+
+**Right-clicks were never being lost.** The shell delivers `WM_RBUTTONUP` under either
+protocol, *including to a message-only window*. The original menu failure was entirely
+`SetForegroundWindow` failing on a message-only window, which `TrackPopupMenu` needs; the
+message itself always arrived.
+
+**Version 4 costs the tooltip.** Icon C received seven `NIN_POPUPOPEN` and seven
+`NIN_POPUPCLOSE` events and displayed nothing. Under version 4 the shell stops drawing `szTip`
+and asks the application to render its own tooltip. It buys nothing in exchange here, so it
+was reverted.
+
+The settled configuration is B: an ordinary top-level window that is never shown, on the
+legacy protocol.
+
+**A methodological note worth more than the fix.** Two rounds of this were spent chasing a
+symptom that had already been repaired, because the app was being stopped with
+`Stop-Process -Force`. That gives it no chance to run `Shell_NotifyIcon(NIM_DELETE)`, so the
+shell keeps painting an icon whose owner is gone — and a ghost icon shows no tooltip and
+swallows clicks, which is indistinguishable from the bug being hunted. Roughly ten of them
+accumulated. Post `WM_COMMAND` with the Quit command instead; it runs the real shutdown path
+and the icon removes itself.
+
+The tooltip is the cheap discriminator throughout: it needs no message loop, so an icon with
+no tooltip is mis-registered or dead, never mis-handled.
+
+---
+
 ### No keyboard-observation capability survives in the release binary
 
 **Observed 2026-08-07**, after `retire-keystroke-capture` removed the capture subsystem. This

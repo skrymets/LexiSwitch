@@ -90,3 +90,25 @@ worth knowing early, which is why the re-test is part of this change rather than
 **Does the release binary stop being quarantined?** Deferrable because the answer changes
 neither the specs nor the approach — only what can be claimed afterwards. It is recorded as a
 task rather than an assumption.
+
+
+## Appendix: the retired `keystroke-capture` capability
+
+The capability is deleted outright rather than edited down — with keystroke observation gone
+([ADR-0011](../../../docs/adr/0011-no-keyboard-observation.md)) there is nothing left for it to
+describe, and a capability with no requirements is not a valid spec.
+
+It is recorded here rather than as a spec delta because the tooling cannot express deleting a
+capability: a delta that removes every requirement rebuilds the spec as empty and is rejected,
+and with the spec already deleted the same delta is treated as creating a new empty one. The
+main spec directory `openspec/specs/keystroke-capture/` was therefore removed directly, as part
+of this change.
+
+The requirements it held, all now void:
+
+- Observation cannot block or alter input
+- The buffer is bounded and memory-resident
+- Nothing derived from keystrokes reaches disk
+- The buffer does not fill in unsafe contexts
+- The buffer is wiped at word and context boundaries
+- The buffer records key positions, not characters

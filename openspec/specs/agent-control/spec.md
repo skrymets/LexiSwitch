@@ -18,32 +18,45 @@ an option to hide it. A program that observes keystrokes remains visible.
 
 ### Requirement: Tray controls
 
-The tray icon SHALL provide, at minimum: pause and resume, reload configuration, open the
+The tray icon SHALL provide, at minimum: enable and disable, reload configuration, open the
 configuration file, and quit.
 
-#### Scenario: User pauses from the tray
+Disabling SHALL mean that the invocation hotkey stops converting. It SHALL NOT be described as
+pausing capture, because nothing is captured.
 
-- **WHEN** the user selects pause
-- **THEN** keystroke recording stops, the buffer is wiped, and hotkeys stop converting
-- **AND** the icon indicates the paused state
+#### Scenario: User disables from the tray
+
+- **WHEN** the user selects disable
+- **THEN** the hotkey stops converting
+- **AND** the icon indicates the disabled state
 
 #### Scenario: User quits
 
 - **WHEN** the user selects quit
-- **THEN** hotkey registrations are released, the buffer is wiped, and the process exits
+- **THEN** hotkey registrations are released and the process exits
 - **AND** no background process remains
 
 ### Requirement: Configuration is a readable file
 
 Configuration SHALL be stored as a single human-readable text file that the user edits
-directly. The file SHALL be the complete description of the system's configurable
-behavior; the system SHALL NOT keep configurable state elsewhere.
+directly. The file SHALL be the complete description of the system's configurable behavior;
+the system SHALL NOT keep configurable state elsewhere.
+
+A configuration file written by an earlier version SHALL NOT prevent the system from starting.
+Settings that no longer exist SHALL be ignored, and the system SHALL report which ones it
+ignored, so that a removed setting is distinguishable from a misspelled one.
 
 #### Scenario: User inspects configuration
 
 - **WHEN** the user opens the configuration file
 - **THEN** every configurable behavior is visible in that one file
 - **AND** the file can be copied, diffed, and version-controlled
+
+#### Scenario: Configuration file predates this version
+
+- **WHEN** the system loads a configuration file containing settings that have been removed
+- **THEN** the system starts, applying the settings it still recognises
+- **AND** it reports each ignored setting by name
 
 ### Requirement: Configuration reloads without restart
 
@@ -72,16 +85,6 @@ the file it occurs.
 - **WHEN** the configuration file is invalid and no previously loaded configuration exists
 - **THEN** the system does not start
 - **AND** it reports the error rather than starting with defaults silently substituted
-
-### Requirement: Password-field protection cannot be disabled
-
-The system SHALL reject any configuration that disables password-field detection.
-
-#### Scenario: User attempts to disable the protection
-
-- **WHEN** a configuration setting the password-field protection to disabled is loaded
-- **THEN** validation fails and the configuration is rejected
-- **AND** the system explains that the setting exists to be explicit, not to be turned off
 
 ### Requirement: Hotkey conflicts fail loudly
 

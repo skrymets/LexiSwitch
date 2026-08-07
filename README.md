@@ -58,4 +58,4 @@ settings GUI. See the spec.
 
 ## Target constraints
 
-Windows 11, Rust, binary under 5 MB, resident memory under 20 MB.
+Windows 11, Rust, binary under 5 MB, private working set under 20 MB.

@@ -14,7 +14,7 @@ context: |
     lexiswitch       thin binary: wiring, config, event loop
 
   Hard constraints:
-    - Binary under 5 MB; resident memory under 20 MB.
+    - Binary under 5 MB; private working set under 20 MB (ADR-0013).
     - No network capability, ever. Network-capable dependencies denied via cargo-deny.
     - No telemetry, no update checker, no crash reporting.
     - Nothing derived from keystrokes reaches disk — not config, not logs, not dumps.

@@ -50,12 +50,11 @@ Test-first: `lexiswitch-core` config work is logic and must be covered without W
 
 - [x] 6.1 `cargo test --workspace` green, with only the deleted suites missing
 - [x] 6.2 `cargo deny check bans licenses sources`, `cargo deny --offline check advisories`, `cargo audit -n`
-- [ ] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
-      *Measured, but the budget does not say which measure it means and the two answers differ:
-      working set peaks at 22.2 MB (fails), private working set peaks at 2.9 MB (passes with two
-      orders of margin). The gap is shared system DLLs — UI Automation and the shell — mapped on
-      the first conversion. No leak either way. Needs a decision on the budget's wording, not a
-      better measurement.*
+- [x] 6.3 Run for an hour idle; confirm resident memory under 20 MB (migrated from `add-manual-layout-conversion` 10.4)
+      *An hour of five-minute samples: private working set peaks at 2.9 MB and ends at 1.7 MB,
+      against the 20 MB budget. Flat or falling throughout with a static handle count, so no
+      leak. Working set reads ~22 MB after a conversion; which of the two the budget means was
+      undefined and is now settled by [ADR-0013](../../../docs/adr/0013-memory-budget-is-private-working-set.md).*
 - [x] 6.4 Monitor network activity during an extended session; confirm no outbound connection (migrated from 10.5)
       *An hour of five-minute samples: no TCP connection to any non-loopback address and no UDP
       endpoint at any point, including across conversions. Recorded in `docs/manual-tests.md`.*

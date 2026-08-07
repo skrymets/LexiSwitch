@@ -16,29 +16,6 @@ SHALL NOT alter text automatically, on any heuristic, at any confidence level.
 - **THEN** the text is left exactly as typed
 - **AND** no correction, prompt, or indication occurs
 
-### Requirement: Convert the last typed word
-
-Pressing the last-word hotkey SHALL replace the most recently typed word with its
-conversion, in place, in the focused application.
-
-#### Scenario: Mistyped word is corrected
-
-- **WHEN** the user types `ауфегкуі` and presses the last-word hotkey
-- **THEN** the text is replaced with `features`
-- **AND** the cursor is left where it would be had the corrected text been typed directly
-
-#### Scenario: No recent typing is available
-
-- **WHEN** the user presses the last-word hotkey and no recent typing was recorded
-- **THEN** nothing is typed, deleted, or altered
-- **AND** the system briefly indicates it had nothing to correct
-
-#### Scenario: Conversion would change nothing
-
-- **WHEN** the last word converts to itself
-- **THEN** no characters are deleted and none are typed
-- **AND** the document is left byte-identical
-
 ### Requirement: Convert the selection
 
 Pressing the selection hotkey SHALL replace the currently highlighted text with its
@@ -68,57 +45,6 @@ conversion, in place.
   expose its selection
 - **THEN** no conversion occurs
 - **AND** the system reports that the application is not supported without the fallback
-
-### Requirement: Convert the clipboard
-
-Pressing the clipboard hotkey SHALL convert the text currently held in the clipboard and
-write the result back to the clipboard.
-
-#### Scenario: Clipboard text is converted
-
-- **WHEN** the clipboard holds mistyped text and the user presses the clipboard hotkey
-- **THEN** the clipboard afterward holds the converted text
-- **AND** nothing is pasted and no application receives synthetic input
-
-#### Scenario: Clipboard holds no text
-
-- **WHEN** the clipboard holds no text content
-- **THEN** the clipboard is left unchanged
-- **AND** the system indicates there was nothing to convert
-
-### Requirement: Repeated presses cycle through candidate layouts
-
-Repeated presses of the same hotkey within the configured multi-tap window SHALL render
-the original text under successive candidate layouts, returning to the original text after
-the last candidate. Each press SHALL render from the retained original rather than from
-the previously converted result.
-
-#### Scenario: Two layouts installed
-
-- **WHEN** the user presses the hotkey twice within the multi-tap window
-- **THEN** the first press converts the text
-- **AND** the second press restores the original text exactly
-
-#### Scenario: Three layouts installed
-
-- **WHEN** the user presses the hotkey three times within the multi-tap window
-- **THEN** the first press renders the text under the second candidate layout
-- **AND** the second press renders it under the third candidate
-- **AND** the third press restores the original text
-
-#### Scenario: Multi-tap window elapses
-
-- **WHEN** the user presses the hotkey, waits longer than the multi-tap window, and
-  presses again
-- **THEN** the second press is treated as a new correction of the text now present
-- **AND** not as a continuation of the previous cycle
-
-#### Scenario: Text was deliberately typed in the other layout
-
-- **WHEN** the user corrects a technical term or password that was intentionally typed
-  under the other layout
-- **THEN** pressing the hotkey again within the multi-tap window restores it exactly
-- **AND** no residue of the intermediate conversion remains
 
 ### Requirement: Active layout follows a correction
 

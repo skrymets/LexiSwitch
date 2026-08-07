@@ -75,6 +75,10 @@ pub fn read_via_automation(automation: &IUIAutomation) -> Option<String> {
     }
 }
 
+/// Planted before the copy, so that a copy which does nothing is distinguishable from one that
+/// produced the text already on the clipboard.
+const COPY_SENTINEL: &str = "\u{1}lexiswitch-copy-sentinel";
+
 /// Read the current selection by copying it, restoring the previous clipboard afterwards.
 ///
 /// The previous **text** is restored; any other format is lost. On failure to acquire the
@@ -86,6 +90,16 @@ pub fn read_via_clipboard(owner: HWND, attempts: u32) -> Result<ClipboardRead, S
         (clip.text(), clip.holds_nontext())
     };
 
+    // Plant a sentinel so a copy that does nothing is distinguishable from one that produced
+    // the text already there. Copying an empty selection leaves the clipboard untouched, and
+    // its old contents then read as though they were the selection — which is how converting a
+    // Cyrillic selection reported "would not change the selection" while the program was
+    // holding English text from an earlier copy.
+    {
+        let clip = Clipboard::open(owner, attempts).map_err(SelectionError::Busy)?;
+        clip.set_text(COPY_SENTINEL).map_err(SelectionError::Win)?;
+    }
+
     // Ctrl+C, then let the target act on it before reading.
     inject::copy_selection().map_err(SelectionError::Inject)?;
     std::thread::sleep(std::time::Duration::from_millis(60));
@@ -93,6 +107,11 @@ pub fn read_via_clipboard(owner: HWND, attempts: u32) -> Result<ClipboardRead, S
     let copied = {
         let clip = Clipboard::open(owner, attempts).map_err(SelectionError::Busy)?;
         clip.text()
+    };
+    // Survived, so nothing was copied.
+    let copied = match copied {
+        Some(text) if text == COPY_SENTINEL => None,
+        other => other,
     };
 
     Ok(ClipboardRead {
@@ -123,6 +142,17 @@ fn paste_replacement(
     attempts: u32,
     previous: Option<String>,
 ) -> Result<(), SelectionError> {
+    // Never paste nothing. Pasting an empty clipboard over a selection deletes it — the worst
+    // outcome a conversion can have, and indistinguishable from the program eating the user's
+    // text on purpose. `convert` cannot produce this from non-empty input, so reaching here
+    // means something upstream is wrong and the safe move is to do nothing at all.
+    if text.is_empty() {
+        return Err(SelectionError::NoChange {
+            via: ReadVia::Clipboard,
+            len: 0,
+        });
+    }
+
     {
         let clip = Clipboard::open(owner, attempts).map_err(SelectionError::Busy)?;
         // Excluded, not plain: this is text derived from what the user typed, and Clipboard
@@ -192,8 +222,12 @@ pub fn convert_selection(
     // touch it, on this path as much as the other (ADR-0010).
     if let Some(automation) = automation {
         if let Some(text) = read_via_automation(automation) {
-            let converted = lexiswitch_core::convert::convert(&text, from, to)
-                .ok_or(SelectionError::NoChange)?;
+            let converted = lexiswitch_core::convert::convert(&text, from, to).ok_or(
+                SelectionError::NoChange {
+                    via: ReadVia::Automation,
+                    len: text.chars().count(),
+                },
+            )?;
 
             // Snapshot only now: the read needed nothing, and taking the clipboard before
             // knowing there is a conversion to deliver would disturb it for nothing.
@@ -224,8 +258,16 @@ pub fn convert_selection(
         return Err(SelectionError::NoSelection);
     };
 
-    let converted =
-        lexiswitch_core::convert::convert(&text, from, to).ok_or(SelectionError::NoChange)?;
+    let Some(converted) = lexiswitch_core::convert::convert(&text, from, to) else {
+        // Put the clipboard back before reporting. The copy above overwrote it, and leaving the
+        // user's clipboard holding their own selection because a conversion declined to act is
+        // a side effect they never asked for.
+        let _ = read.restore(owner, attempts);
+        return Err(SelectionError::NoChange {
+            via: ReadVia::Clipboard,
+            len: text.chars().count(),
+        });
+    };
 
     paste_replacement(&guard, owner, &converted, attempts, read.previous.take())?;
 
@@ -255,8 +297,9 @@ pub enum SelectionError {
     Unsupported,
     /// Nothing appears to be selected.
     NoSelection,
-    /// Conversion would not change the text.
-    NoChange,
+    /// Conversion would not change the text. Carries what was read, because the useful
+    /// question when this appears is *what* the program got hold of.
+    NoChange { via: ReadVia, len: usize },
     Busy(crate::clipboard::ClipboardBusy),
     Inject(inject::Abandoned),
     Win(WinError),
@@ -271,7 +314,14 @@ impl std::fmt::Display for SelectionError {
                  is switched off; the selection was not converted"
             ),
             Self::NoSelection => write!(f, "nothing is selected; nothing was changed"),
-            Self::NoChange => write!(f, "converting would not change the selection"),
+            Self::NoChange { via, len } => write!(
+                f,
+                "converting would not change the {len} characters read via {}",
+                match via {
+                    ReadVia::Automation => "the accessibility text pattern",
+                    ReadVia::Clipboard => "copy",
+                }
+            ),
             Self::Busy(e) => write!(f, "{e}"),
             Self::Inject(e) => write!(f, "{e}"),
             Self::Win(e) => write!(f, "{e}"),

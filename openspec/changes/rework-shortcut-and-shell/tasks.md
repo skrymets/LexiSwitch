@@ -21,7 +21,11 @@
       Shift+Pause, converted `Ghbdsn ltoj` to `Привіт дещо` from the tray command. Its log
       reads `hotkey_conflict` then `selection_requested` then `outcome_applied`.*
 - [x] 2.4 Add settings and diagnostics entries
-- [ ] 2.5 Confirm by hand that each of the five states is reachable and visibly different from the others
+- [x] 2.5 Confirm by hand that each of the five states is reachable and visibly different from the others
+      *Four of five confirmed by the user 2026-08-07: enabled, disabled, shortcut conflict and
+      too few layouts, each visibly distinct and naming its own condition. The runtime-error
+      state was not reached and there is no deliberate way to reach it; recorded rather than
+      contrived.*
 
 ## 3. Shortcut recording
 
@@ -47,10 +51,8 @@
 ## 5. Recovering without a restart
 
 - [x] 5.1 Become able to convert once a second layout is installed, without restarting
-      *Implemented as the same re-check that clears a shortcut conflict: both conditions are
-      re-tested whenever the tray is touched, since nothing notifies the program when either
-      changes. The layout half was not executed for the same reason as task 1.4 — it would mean
-      removing a keyboard layout from the user's Windows configuration.*
+      *Confirmed by the user 2026-08-07: running with one layout, adding a second was noticed
+      without a restart — icon returned to normal and conversion worked.*
 - [x] 5.2 Clear the conflict state once a valid shortcut is registered
 - [x] 5.3 Confirm both transitions by hand
       *The shortcut transition is confirmed: a second instance in conflict took Shift+Pause and

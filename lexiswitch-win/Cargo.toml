@@ -25,6 +25,9 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",               # Shell_NotifyIconW, for the tray icon and balloons
     "Win32_System_LibraryLoader",   # GetModuleHandleW, for the window class instance
     "Win32_System_Threading",       # OpenProcess, QueryFullProcessImageNameW (task 7.1)
+    # SECURITY_ATTRIBUTES, which CreateMutexW takes even when a null one is passed —
+    # the single-instance guard needs it and nothing else here does.
+    "Win32_Security",
     "Win32_Globalization",          # LCIDToLocaleName, resolving a layout to a name
     "Win32_UI_Accessibility",       # IUIAutomation, for the IsPassword property (task 7.2)
     "Win32_System_Com",             # CoInitializeEx / CoCreateInstance, for the above

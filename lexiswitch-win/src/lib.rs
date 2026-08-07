@@ -31,6 +31,7 @@ pub mod clipboard;
 pub mod focus;
 pub mod hotkey;
 pub mod inject;
+pub mod instance;
 pub mod langswitch;
 pub mod layouts;
 pub mod selection;

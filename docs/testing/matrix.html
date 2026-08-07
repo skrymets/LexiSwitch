@@ -16,5 +16,18 @@
 </style>
 <h1>LexiSwitch matrix target</h1>
 <p>The harness types into the field below, selects it, and runs the hotkey. Nothing on this
-   page scripts the keyboard or the clipboard.</p>
+   page scripts the keyboard or the clipboard; it only keeps the caret here.</p>
 <textarea id="field" autofocus spellcheck="false"></textarea>
+<script>
+  // Keep the caret in the field whenever this window becomes active.
+  //
+  // `autofocus` only fires on load. The harness focuses the browser window afterwards, and
+  // Chrome does not necessarily hand focus back to the page when it does — so a paste went
+  // nowhere and the run reported "seeding failed". Nothing here touches the keyboard or the
+  // clipboard; it only decides where the caret sits in this page.
+  const field = document.getElementById('field');
+  const grab = () => field.focus();
+  grab();
+  window.addEventListener('focus', grab);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) grab(); });
+</script>

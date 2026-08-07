@@ -19,7 +19,8 @@ use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, InSendMessage,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
+    InSendMessage,
     PostMessageW, PostQuitMessage, RegisterClassW, MSG, WM_APP, WM_DESTROY, WNDCLASSW,
     WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -35,6 +36,34 @@ const CLASS_NAME: PCWSTR = w!("LexiSwitchMessageWindow");
 /// delivered `WM_INPUT` and pumped the loop continuously, which hid the need for this; with
 /// observation removed, an idle loop stays idle and a result produced meanwhile is never read.
 pub const WM_WAKE: u32 = WM_APP + 2;
+
+/// Sent by a second instance that has just declined to start, asking the running one to make
+/// itself visible.
+///
+/// The commonest reason to start LexiSwitch twice is having lost track of the first one, so
+/// declining silently answers the wrong question. The running instance responds with a balloon
+/// naming itself and its shortcut.
+pub const WM_SHOW_YOURSELF: u32 = WM_APP + 3;
+
+/// Ask a running instance to make itself visible, if one can be found.
+///
+/// Returns whether the message was delivered. A failure costs only the balloon: the caller has
+/// already decided not to start, and that decision was made by the instance guard, not here.
+/// This window search is safe precisely because it decides nothing.
+pub fn ask_running_instance_to_show() -> bool {
+    // SAFETY: the class name is a static NUL-terminated wide string. A null window name matches
+    // any window of the class, and a null result — no such window — is a valid answer.
+    let hwnd = unsafe { FindWindowW(CLASS_NAME, None) };
+    let Ok(hwnd) = hwnd else {
+        return false;
+    };
+    if hwnd.is_invalid() {
+        return false;
+    }
+    // SAFETY: posting an application-defined message to a window found by class. A stale handle
+    // makes the post fail, which is the bool this returns.
+    unsafe { PostMessageW(Some(hwnd), WM_SHOW_YOURSELF, WPARAM(0), LPARAM(0)) }.is_ok()
+}
 
 /// Permission to wake a [`MessageWindow`] from another thread.
 ///

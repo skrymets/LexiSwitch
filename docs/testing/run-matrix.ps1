@@ -78,6 +78,7 @@ Add-Type -Namespace LX -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern int GetKeyboardLayoutList(int n, [Out] System.IntPtr[] list);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, System.IntPtr l);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(System.IntPtr h, System.Text.StringBuilder s, int m);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(System.IntPtr h, System.Text.StringBuilder s, int m);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr h);
 public delegate bool EnumProc(System.IntPtr h, System.IntPtr l);
 '@
@@ -126,6 +127,23 @@ function Chord([byte]$vk, [int]$ms = 450) {
 
 function Focus-Window([IntPtr]$h) {
     for ($i = 0; $i -lt 8; $i++) {
+        # When the shell holds the foreground — a taskbar, which happens after windows close
+        # and focus falls through to Explorer — Windows refuses SetForegroundWindow from any
+        # other process, and no amount of retrying or minimising changes that. A tap of Alt
+        # releases the lock.
+        #
+        # Only then, though. Alt activates a menu bar in most applications, and in a browser
+        # that moves focus off the page: tapping it unconditionally fixed the focus and broke
+        # the very field the test types into, turning "could not focus" into "seeding failed".
+        $blocker = [LX.W]::GetForegroundWindow()
+        $bc = New-Object System.Text.StringBuilder 256
+        [void][LX.W]::GetClassNameW($blocker, $bc, 256)
+        if ($bc.ToString() -in 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'WorkerW', 'Progman') {
+            [LX.W]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
+            [LX.W]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 120
+        }
+
         [void][LX.W]::ShowWindow($h, 9)                     # SW_RESTORE
         Start-Sleep -Milliseconds 300
         $fg = [LX.W]::GetForegroundWindow()
@@ -326,18 +344,28 @@ function Run-Case([string]$app, [string]$scenario) {
 
     if (-not (Set-Layout 'en-US')) { $row.Note = 'could not set en-US'; return [pscustomobject]$row }
 
-    # Seed the field and select it. The read-only page carries its text in the markup,
-    # because there is no way to put it there from the keyboard.
-    Chord 0x41 300
-    if (-not $readOnly) {
-        Set-Clipboard -Value $text
-        Start-Sleep -Milliseconds 250
-        Chord 0x56 700      # Ctrl+V
+    # Seed the field and select it. The read-only page carries its text in the markup, because
+    # there is no way to put it there from the keyboard.
+    #
+    # Retried, because seeding is setup rather than the thing under test and it fails for
+    # reasons that say nothing about the product — a browser that has not finished becoming
+    # interactive being the usual one on a loaded machine. A red cell that turns out to mean
+    # "Chrome was still starting" costs more to investigate than the retry costs to run.
+    $seeded = ''
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        if ($attempt -gt 0) { Start-Sleep -Seconds 2 }
+        Chord 0x41 300
+        if (-not $readOnly) {
+            Set-Clipboard -Value $text
+            Start-Sleep -Milliseconds 250
+            Chord 0x56 700      # Ctrl+V
+        }
+        Chord 0x41 500          # Ctrl+A
+        $seeded = Read-Field
+        if ($seeded -eq $text) { break }
     }
-    Chord 0x41 500          # Ctrl+A
-    $seeded = Read-Field
     if ($seeded -ne $text) {
-        $row.Note = "seeding failed (field held '$seeded')"
+        $row.Note = "seeding failed after 3 attempts (field held '$seeded')"
         Close-Target $app
         return [pscustomobject]$row
     }

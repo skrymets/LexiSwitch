@@ -812,3 +812,102 @@ move one. The same run's remaining failures were the cascade from typing into no
 
 Worth keeping in mind when reading a red cell: this harness has now produced more false
 failures than true ones.
+
+---
+
+## Manual checklist results (2026-08-07)
+
+Executed by the user against the release build. Full working copy in
+`docs/testing/manual-checklist.md`.
+
+**The two layout conditions, which had never been run**, because they mean changing the
+machine's installed keyboard layouts:
+
+- **Starting with one layout installed** — starts, does not exit. Balloon: *"Conversion needs at
+  least two keyboard layouts, and 1 is installed. Add a second layout in Windows settings;
+  LexiSwitch will pick it up without being restarted."* Tray icon a yellow warning triangle,
+  tooltip *"1 keyboard layout is installed, two are needed"*. `Shift+Pause` does nothing.
+- **Adding a second layout while it runs** — noticed without a restart. Icon returns to normal,
+  balloon names the shortcut, and conversion works. This was the half of task 5.1 that had only
+  ever been reasoned about.
+
+**The five states are visibly distinct.** Enabled, disabled and shortcut-conflict all confirmed
+by eye as different from one another, with the conflict naming the unavailable combination. Too
+few layouts is the fourth, above. The runtime-error state was not reached, and there is still no
+way to reach it deliberately.
+
+**Diagnostics** reports the state, layouts, configuration path and logging setting, with no
+selected text or conversion results in it.
+
+**Cancelling by clicking away** leaves the document and the clipboard untouched.
+
+**Microsoft Word** converts correctly — an application outside the matrix and outside the two
+engines it covers.
+
+### OPEN: IntelliJ IDEA reads the selection only sometimes
+
+**Reported 2026-08-07. Not diagnosed, not fixed. Left open deliberately.**
+
+In an IDEA XML editor, selecting `БщкпфтшяфешщтЮ` (`<organization>` typed under the Ukrainian
+layout) and pressing `Shift+Pause` gives *"Selection could not be read: nothing is selected;
+nothing was changed"*. Moving the caret, reselecting the same text and pressing again produces
+the chooser and converts correctly. Repeating alternates between the two outcomes with no
+pattern the user could see.
+
+Both halves are consistent with the read failing rather than the conversion: nothing is
+modified in the failing case, and the message is the honest one.
+
+Worth noting what it is **not**. The Notepad++ deletion had the same shape — a copy that
+produced nothing — and turned out to be a held modifier turning `Ctrl+C` into `Ctrl+Shift+C`.
+That fix is in and Notepad++ is clean, so if a modifier is involved here it is a different one,
+or IDEA is doing something with focus between the hotkey and the copy. IDEA is a JetBrains IDE
+and this file already records that IDEA's accessibility support is partial (`## Password-field
+detection coverage`), so the automation path may be intermittently available and the clipboard
+fallback then racing something.
+
+Not investigated further at the user's direction.
+
+---
+
+## One instance per session (2026-08-07)
+
+Verified with `docs/testing/shell-checks.ps1`, 14 of 14:
+
+- A second launch declines, exits `0`, and says *"already running; the running one has been asked
+  to show itself"*. The first is untouched and exactly one process remains.
+- The running instance logs `second_instance_declined` and shows a balloon, so a user who has
+  lost track of it is pointed at it rather than left with a program that appeared to do nothing.
+- Two started at the same moment leave exactly one. The decision is a named mutex, made in the
+  kernel; a window search would have let both pass.
+- A start after a **hard kill** succeeds — nothing is left behind, which a lock file could not
+  promise.
+- A genuine conflict with another application still reports and still recovers. That is now the
+  only way to reach the conflict state, which is what it always described.
+
+## The shell can hold the foreground, and no amount of asking moves it
+
+Chrome rows of the matrix began failing with "could not focus". The foreground window turned out
+to be `Shell_SecondaryTrayWnd` — the taskbar on the second monitor, owned by Explorer. While the
+shell holds the foreground, `SetForegroundWindow` from another process returns false every time.
+Retrying does not help, and minimising a taskbar does nothing.
+
+A tap of `Alt` releases the lock. But **only tap it when the shell is the blocker**: `Alt`
+activates a menu bar, and in a browser that moves focus off the page — tapping it
+unconditionally fixed the focus and broke the field the test types into, turning "could not
+focus" into "seeding failed". The harness now checks the blocking window's class first.
+
+Worth remembering for the product, not only the harness: `winui::take_foreground` could meet the
+same condition. It has not been observed there, because the window it takes the foreground from
+is the application the user just selected text in — never the taskbar. Recorded rather than
+pre-emptively worked around.
+
+## Seeding is setup, and setup gets retried
+
+The same investigation produced three "seeding failed" cells that meant only that Chrome had not
+finished becoming interactive on a machine with 27 GB of 31.6 GB in use. Seeding is not the thing
+under test, so it now retries three times before failing the case. Chrome went from 1 pass in 4
+to 4 in 4, and the full matrix to 24 of 24.
+
+This is the third harness fault in a row that presented as a product failure. The count is worth
+keeping honest: a red cell in this matrix is a question, and more often than not the answer has
+been about the harness or the machine rather than the program.

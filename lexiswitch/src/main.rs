@@ -23,9 +23,10 @@ use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
 use lexiswitch_win::recorder::{self, Recorded};
 use lexiswitch_win::inject::FocusGuard;
+use lexiswitch_win::instance;
 use lexiswitch_win::layouts::{self, InstalledLayout};
 use lexiswitch_win::tray::{tray_event, MenuCommand, Tray, WM_TRAY};
-use lexiswitch_win::window::{Flow, MessageWindow};
+use lexiswitch_win::window::{self, Flow, MessageWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
     WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_RBUTTONUP,
 };
@@ -45,6 +46,31 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    // --- one agent per session ------------------------------------------------------
+    //
+    // First, before configuration is read, before layouts are built and before the shortcut is
+    // claimed. A second instance that got as far as any of those would already have written a
+    // log line, taken a tray icon, or reported a conflict with the instance it is about to
+    // decline to replace.
+    let _instance = match instance::acquire() {
+        instance::Instance::First(guard) => guard,
+        instance::Instance::AlreadyRunning => {
+            // Not silence: the usual reason to start it twice is having lost the first one, so
+            // the running instance is asked to say where it is. Not an error either — the user
+            // wanted LexiSwitch running, and it is.
+            let shown = window::ask_running_instance_to_show();
+            eprintln!(
+                "lexiswitch: already running{}",
+                if shown {
+                    "; the running one has been asked to show itself"
+                } else {
+                    ", but it could not be reached to show itself"
+                }
+            );
+            return Ok(());
+        }
+    };
+
     // --- configuration -------------------------------------------------------------
     let config_path = configwatch::default_path();
     let mut config = match &config_path {
@@ -281,6 +307,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             WM_COMMAND => {
                 command = MenuCommand::from_raw(msg.wParam.0 as u32 & 0xFFFF);
+            }
+            // A second instance declined to start and is pointing the user here.
+            window::WM_SHOW_YOURSELF => {
+                log.note("second_instance_declined");
+                tray.notify(
+                    "LexiSwitch is already running",
+                    &format!("{} This icon is the one that is running.", state.explanation()),
+                );
             }
             _ => {}
         }

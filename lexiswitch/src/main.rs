@@ -20,9 +20,11 @@ use lexiswitch_core::config::Config;
 use lexiswitch_core::layout::LayoutTable;
 use lexiswitch_win::hotkey::{parse_binding, Binding, HotkeyId, Hotkeys};
 use lexiswitch_win::layouts::{self, InstalledLayout};
-use lexiswitch_win::tray::{MenuCommand, State, Tray, WM_TRAY};
+use lexiswitch_win::tray::{tray_event, MenuCommand, State, Tray, WM_TRAY};
 use lexiswitch_win::window::{Flow, MessageWindow};
-use windows::Win32::UI::WindowsAndMessaging::{WM_COMMAND, WM_HOTKEY, WM_RBUTTONUP};
+use windows::Win32::UI::WindowsAndMessaging::{
+    WM_COMMAND, WM_CONTEXTMENU, WM_HOTKEY, WM_RBUTTONUP,
+};
 
 mod configwatch;
 mod worker;
@@ -185,7 +187,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-            WM_TRAY if msg.lParam.0 as u32 == WM_RBUTTONUP => {
+            // Logged unconditionally, before any guard. Two rounds of fixing this menu have
+            // assumed the message arrives and only the handling was wrong; nothing has yet
+            // shown that it arrives at all. `lparam` carries the mouse message under the
+            // legacy tray protocol this icon uses.
+            WM_TRAY => {
+                let click = tray_event(msg.lParam.0);
+                log.note(&format!("tray_message event=0x{click:04X}"));
+                // WM_CONTEXTMENU as well as WM_RBUTTONUP: which one the shell sends depends on
+                // the notify-icon protocol version, and accepting both costs nothing.
+                if click != WM_RBUTTONUP && click != WM_CONTEXTMENU {
+                    return Flow::Continue;
+                }
                 if let Some(command) = tray.show_menu(state) {
                     match command {
                         MenuCommand::EnableDisable => {

@@ -301,16 +301,29 @@ fn every_state_is_distinguishable() {
 /// known not to work.
 #[test]
 fn suggestions_exclude_the_current_shortcut() {
-    let s = lexiswitch_core::state::suggested_shortcuts("Ctrl+Alt+K");
+    let s = lexiswitch_core::state::suggested_shortcuts(&["Ctrl+Alt+K"]);
     assert!(!s.iter().any(|x| x == "Ctrl+Alt+K"), "{s:?}");
     assert!(!s.is_empty());
+}
+
+/// Nor the program's *other* shortcut. Suggesting it would offer a combination that is
+/// guaranteed to be refused — one combination cannot open two windows — and the refusal would
+/// name LexiSwitch itself, which reads as a bug rather than as advice.
+#[test]
+fn suggestions_exclude_every_shortcut_the_program_holds() {
+    let s = lexiswitch_core::state::suggested_shortcuts(&["Shift+Pause", "Ctrl+Alt+K"]);
+    assert!(
+        !s.iter().any(|x| x.eq_ignore_ascii_case("Ctrl+Alt+K")),
+        "the other LexiSwitch shortcut was suggested: {s:?}"
+    );
+    assert!(!s.is_empty(), "excluding two should not empty the list");
 }
 
 /// Case and stray spacing in the configuration file should not defeat the filter.
 #[test]
 fn suggestions_match_the_current_shortcut_loosely() {
     for current in ["ctrl+alt+k", "  Ctrl+Alt+K  "] {
-        let s = lexiswitch_core::state::suggested_shortcuts(current);
+        let s = lexiswitch_core::state::suggested_shortcuts(&[current]);
         assert!(!s.iter().any(|x| x.eq_ignore_ascii_case("ctrl+alt+k")), "{s:?}");
     }
 }
@@ -318,5 +331,5 @@ fn suggestions_match_the_current_shortcut_loosely() {
 /// Short enough to read at a glance; a list of ten is not a suggestion.
 #[test]
 fn suggestions_are_few() {
-    assert!(lexiswitch_core::state::suggested_shortcuts("Shift+Pause").len() <= 3);
+    assert!(lexiswitch_core::state::suggested_shortcuts(&["Shift+Pause"]).len() <= 3);
 }

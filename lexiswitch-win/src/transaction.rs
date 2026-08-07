@@ -29,7 +29,6 @@
 //! consume `self`, so there is no way to hold one open by accident, and nothing survives the
 //! call that ended it.
 
-use lexiswitch_core::layout::LayoutTable;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::IUIAutomation;
 
@@ -136,14 +135,6 @@ impl Transaction {
     /// Whether reading cost the clipboard non-text content.
     pub fn lost_nontext(&self) -> bool {
         self.lost_nontext
-    }
-
-    /// Render the original under a pair of layouts, without touching the document.
-    ///
-    /// Present so a caller previewing candidates cannot accidentally render from anything but
-    /// the original.
-    pub fn render(&self, from: &LayoutTable, to: &LayoutTable) -> String {
-        lexiswitch_core::candidates::render(&self.original, from, to)
     }
 
     /// Replace the selection with `replacement`, then put everything back.

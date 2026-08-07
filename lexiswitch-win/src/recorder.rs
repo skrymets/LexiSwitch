@@ -63,6 +63,9 @@ pub enum Recorded {
 struct Recorder<'a> {
     /// The shortcut as it stands, shown so the user can see what they are replacing.
     current: &'a Shortcut,
+    /// Every combination LexiSwitch already holds, so none of them is suggested. Offering the
+    /// program's other shortcut would offer something certain to be refused.
+    taken: &'a [String],
     /// Why the last attempt was refused, if there was one.
     rejected: Option<String>,
     /// The combination captured so far, ready to be accepted.
@@ -83,7 +86,11 @@ struct Recorder<'a> {
 /// `rejected` is shown when this is a second attempt — a combination that could not be
 /// registered is reported here rather than in a balloon the user has to go and find, and the
 /// previous shortcut is left alone until a replacement actually works.
-pub fn show(current: &Shortcut, rejected: Option<String>) -> Result<Recorded, WinError> {
+pub fn show(
+    current: &Shortcut,
+    taken: &[String],
+    rejected: Option<String>,
+) -> Result<Recorded, WinError> {
     // SAFETY: the class name is static with a NUL and the WNDCLASSW is fully initialised. A
     // zero return means the class was registered by an earlier invocation, which is harmless.
     let hinstance =
@@ -104,6 +111,7 @@ pub fn show(current: &Shortcut, rejected: Option<String>) -> Result<Recorded, Wi
 
     let mut state = Recorder {
         current,
+        taken,
         rejected,
         candidate: None,
         done: None,
@@ -301,10 +309,8 @@ impl Recorder<'_> {
         y += self.pen.line_height;
         // Suggestions, never promises: whether any of these is free depends on every other
         // application running, and the only way to find out is to try one.
-        let current = match self.current {
-            Shortcut::Registered(b) | Shortcut::Conflict(b) => b.as_str(),
-        };
-        let ideas = suggested_shortcuts(current);
+        let held: Vec<&str> = self.taken.iter().map(String::as_str).collect();
+        let ideas = suggested_shortcuts(&held);
         if !ideas.is_empty() {
             self.pen.draw_aligned(
                 hdc,

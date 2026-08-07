@@ -6,7 +6,12 @@
 //! comments and their spacing in it, and re-serialising the parsed document would quietly
 //! rewrite all of that. So this is a surgical edit on the text, not a round trip.
 
-use lexiswitch_core::config::rewrite_hotkey;
+use lexiswitch_core::config::rewrite_setting;
+
+/// The edit every test here makes: the conversion shortcut, as the interface writes it.
+fn rewrite_hotkey(text: &str, binding: &str) -> String {
+    rewrite_setting(text, "hotkeys", "convert_selection", &format!("\"{binding}\""))
+}
 
 /// The ordinary case, and the property that matters most: everything the user wrote is still
 /// there, byte for byte, except the one value.

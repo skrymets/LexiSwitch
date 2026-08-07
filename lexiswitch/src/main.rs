@@ -594,7 +594,12 @@ fn change_shortcut(
             Which::Convert => shortcuts.convert.clone(),
             Which::Case => shortcuts.case.clone(),
         };
-        let recorded = match recorder::show(&current, rejected.take()) {
+        // Both bindings, so the recorder never suggests the one this program already holds.
+        let taken = vec![
+            config.hotkeys.convert_selection.clone(),
+            config.hotkeys.change_case.clone(),
+        ];
+        let recorded = match recorder::show(&current, &taken, rejected.take()) {
             Ok(r) => r,
             Err(e) => {
                 tray.notify("Could not open the recorder", &e.to_string());

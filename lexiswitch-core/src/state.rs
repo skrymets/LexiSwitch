@@ -250,10 +250,15 @@ fn join(items: &[(String, &'static str)]) -> String {
 /// The list is deliberately short and unglamorous: combinations unlikely to collide with an
 /// editor's own bindings, with the current one filtered out because suggesting what the user
 /// already has is noise.
-pub fn suggested_shortcuts(current: &str) -> Vec<String> {
+pub fn suggested_shortcuts(taken: &[&str]) -> Vec<String> {
     ["Ctrl+Alt+K", "Ctrl+Shift+Insert", "Alt+Pause", "Ctrl+Alt+Space"]
         .into_iter()
-        .filter(|s| !s.eq_ignore_ascii_case(current.trim()))
+        .filter(|s| {
+            // Every combination the program already holds, not only the one being replaced.
+            // Suggesting the other shortcut offers something certain to be refused, and the
+            // refusal names LexiSwitch itself — which reads as a fault rather than as advice.
+            !taken.iter().any(|t| s.eq_ignore_ascii_case(t.trim()))
+        })
         .take(3)
         .map(str::to_string)
         .collect()

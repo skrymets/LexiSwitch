@@ -313,30 +313,6 @@ fn locate(text: &str, section: &str, key: &str) -> Option<usize> {
     None
 }
 
-/// Write `binding` into the `convert_selection` setting of a configuration file's text.
-///
-/// A surgical edit, not a round trip. Parsing the file and re-serialising it would produce a
-/// valid document and destroy everything about it that is the user's: their comments, their
-/// spacing, the order they chose to put things in. The file is the complete description of
-/// behaviour, so the interface has to write to it — and it is the user's file, so it has to
-/// write as little as possible.
-///
-/// Handles the three shapes the file can be in: the setting is present, the `[hotkeys]` table
-/// is present without it, or neither is. Line endings are taken from the file rather than
-/// assumed, because a Windows editor will have left CRLF and rewriting them would show up as a
-/// whole-file diff.
-///
-/// A commented-out setting is deliberately not treated as the setting. Editing it would leave
-/// the change invisible to the parser while looking correct in the editor.
-pub fn rewrite_hotkey(text: &str, binding: &str) -> String {
-    rewrite_setting(
-        text,
-        "hotkeys",
-        "convert_selection",
-        &format!("\"{}\"", binding.replace('"', "\\\"")),
-    )
-}
-
 /// Write `value` into `table.key`, leaving every other byte of the file alone.
 ///
 /// `value` is already TOML: quoted for a string, bare for a boolean or a number. The caller

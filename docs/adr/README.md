@@ -19,6 +19,8 @@ old one rather than editing history.
 | [0011](0011-no-keyboard-observation.md)              | No keyboard observation; operate only on an explicit selection | Accepted                                                          |
 | [0012](0012-single-chooser-transaction.md)           | One chooser transaction instead of multi-tap cycling           | Accepted                                                          |
 | [0013](0013-memory-budget-is-private-working-set.md) | The memory budget is private working set                       | Accepted                                                          |
+| [0014](0014-case-conversion-is-a-separate-transaction.md) | Case conversion is a separate transaction                 | Accepted                                                          |
+| [0015](0015-usage-memory-outside-configuration.md)   | Usage memory lives outside the configuration file              | Accepted                                                          |
 
 ## Format
 

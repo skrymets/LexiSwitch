@@ -25,6 +25,7 @@ use std::{thread, time::Duration};
 use windows::core::w;
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
+    GetOpenClipboardWindow,
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
     IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
@@ -34,6 +35,51 @@ use windows::Win32::System::Ole::{CF_LOCALE, CF_OEMTEXT, CF_TEXT, CF_UNICODETEXT
 use crate::WinError;
 
 const CF_TEXT_U32: u32 = CF_UNICODETEXT.0 as u32;
+
+/// Wait for another process to open the clipboard and let go of it again.
+///
+/// A paste is asynchronous. `SendInput` returns once the keystroke is *enqueued*, and the
+/// target reads the clipboard whenever it gets round to it — which for a browser is well after
+/// a native edit control would have. Restoring the previous contents on a fixed delay is
+/// therefore a race, and losing it is silent and total: Chrome pasted the *restored* clipboard,
+/// so the field ended up holding whatever the user had copied earlier instead of the
+/// conversion.
+///
+/// Opening the clipboard is the one part of reading it that is observable from outside, so
+/// that is what this waits for: first for someone else to open it, then for them to finish.
+/// Returns whether a consumer was actually seen — a caller that gets `false` has learned only
+/// that nothing was observed within the timeout, not that nothing read it.
+pub fn wait_for_consumer(timeout: std::time::Duration) -> bool {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(10);
+    let start = std::time::Instant::now();
+
+    // Phase one: someone other than us opens it.
+    let mut seen = false;
+    while start.elapsed() < timeout {
+        // SAFETY: no preconditions. A null result means nobody has the clipboard open, which
+        // is a valid answer and the common one.
+        let owner = unsafe { GetOpenClipboardWindow() };
+        if owner.is_ok_and(|h| !h.is_invalid()) {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    if !seen {
+        return false;
+    }
+
+    // Phase two: they close it again. Only then is the content safe to replace.
+    while start.elapsed() < timeout {
+        // SAFETY: as above.
+        let owner = unsafe { GetOpenClipboardWindow() };
+        if !owner.is_ok_and(|h| !h.is_invalid()) {
+            return true;
+        }
+        std::thread::sleep(POLL);
+    }
+    true
+}
 
 /// The formats that opt clipboard content out of Windows Clipboard History, Cloud Clipboard,
 /// and third-party clipboard monitors.

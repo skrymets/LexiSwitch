@@ -635,3 +635,44 @@ re-pressing on their behalf could leave a modifier stuck down.
 Verified after the fix, in Notepad++ through the real hotkey: chooser opens, `Escape` leaves the
 document intact, `Enter` converts correctly, the prior clipboard comes back, and one `Ctrl+Z`
 restores the original.
+
+---
+
+## The paste is asynchronous, and restoring the clipboard too early loses it (2026-08-07)
+
+Conversion did nothing useful in Chrome. The matrix showed why in one cell: the field ended up
+holding `PRIOR-CLIPBOARD` — the harness's *previous* clipboard contents — instead of the
+conversion.
+
+`SendInput` returns once a keystroke is enqueued, not once it is applied. The replacement put
+the converted text on the clipboard, sent `Ctrl+V`, waited a fixed 180 ms and then restored the
+previous contents. A native edit control reads the clipboard well inside that window; Chrome
+does not. It read *after* the restore and pasted what had just been put back.
+
+The failure is silent and total: the paste succeeds, the program reports success, and the user's
+document receives whatever they happened to have copied earlier.
+
+**Fixed** by waiting for the target to actually take the clipboard rather than assuming a delay
+is enough (`clipboard::wait_for_consumer`). Opening the clipboard is the one observable part of
+reading it, so the wait watches for another process to open it and then let go, capped at two
+seconds. Nothing waits the full two seconds in practice — the wait ends when the consumer
+finishes — so an application that never reads the clipboard at all pays the timeout and nothing
+else does.
+
+## The compatibility matrix
+
+`docs/testing/run-matrix.ps1` runs four scenarios — apply, apply-and-switch, cancel, and a
+selection no layout converts — against Notepad, Notepad++, Chrome and Edge, and reports expected
+against actual for both the resulting text and the resulting keyboard layout. Latest results are
+in `docs/testing/matrix-results.md`.
+
+It exists because every defect in this project so far was found in whichever application
+happened to expose it, and fixed against that one application: a held modifier that destroys a
+selection in Notepad++ was probed in Notepad and declared clean, and a clipboard race that
+breaks Chrome could not be seen in either editor. Sixteen cells run in a few minutes and answer
+the question the individual probes could not — what is the state of the whole thing right now.
+
+**A caution on reading it.** Two of its early failures were defects in the harness, not the
+product: a hardcoded Ukrainian layout handle with the wrong constant, and a window search that
+matched an Edge window when Chrome was asked for. A third was the harness checking the clipboard
+sooner than the product's own worst-case restore. A red cell is a question, not a verdict.

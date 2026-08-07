@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>LexiSwitch matrix target</title>
+<!--
+  A plain HTML text field for the browser rows of the compatibility matrix.
+
+  Chrome and Edge are not native Win32 applications: their text fields are rendered by the
+  browser, exposed through UI Automation only patchily, and are the case the native editors
+  cannot stand in for. The harness needs a field it can focus without clicking, so the textarea
+  autofocuses; everything else here exists only to make the field big enough to see.
+-->
+<style>
+  body { font: 16px/1.4 "Segoe UI", sans-serif; margin: 2rem; background: #f7f7f7; }
+  textarea { width: 100%; height: 40vh; font: 18px/1.5 Consolas, monospace; padding: .75rem; }
+  p { color: #555; }
+</style>
+<h1>LexiSwitch matrix target</h1>
+<p>The harness types into the field below, selects it, and runs the hotkey. Nothing on this
+   page scripts the keyboard or the clipboard.</p>
+<textarea id="field" autofocus spellcheck="false"></textarea>

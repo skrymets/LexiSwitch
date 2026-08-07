@@ -33,7 +33,7 @@ use lexiswitch_core::layout::LayoutTable;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomationTextPattern, UIA_TextPatternId};
 
-use crate::clipboard::Clipboard;
+use crate::clipboard::{self, Clipboard};
 use crate::inject::{self, FocusGuard};
 use crate::WinError;
 
@@ -128,6 +128,14 @@ pub fn read_via_clipboard(owner: HWND, attempts: u32) -> Result<ClipboardRead, S
 /// already back, that is what it pastes.
 const PASTE_SETTLE: std::time::Duration = std::time::Duration::from_millis(180);
 
+/// How long to wait for the target to take the clipboard before restoring it anyway.
+///
+/// Generous, because losing this race is silent and destroys the conversion: the target reads
+/// the clipboard after the restore and pastes the *previous* contents into the user's document.
+/// Nothing waits the whole time in practice — the wait ends as soon as the consumer lets go —
+/// so the cost of a large value is paid only by an application that never reads it at all.
+const PASTE_CONSUMED: std::time::Duration = std::time::Duration::from_millis(2000);
+
 /// Deliver `text` by pasting it over the selection, then put the clipboard back.
 ///
 /// One edit in the target and four synthetic events regardless of length, which is the whole
@@ -162,7 +170,18 @@ pub fn paste_over_selection(
     }
 
     let pasted = inject::paste(guard).map_err(SelectionError::Inject);
+
+    // Wait for the target to actually take the clipboard, rather than assuming it has. A fixed
+    // delay is enough for a native edit control and is not enough for a browser: Chrome read
+    // the clipboard after the restore below and pasted the previous contents, so the field
+    // ended up holding the user's old clipboard instead of the conversion
+    // (`docs/testing/run-matrix.ps1` covers exactly this).
+    //
+    // The settle still runs first: the consumer cannot open the clipboard before the keystroke
+    // has been delivered, and polling from the instant SendInput returns would see the window
+    // between our own write and their read as "nobody wants it".
     std::thread::sleep(PASTE_SETTLE);
+    clipboard::wait_for_consumer(PASTE_CONSUMED);
 
     // Restore regardless of whether the paste worked — the clipboard must not keep our copy
     // of the user's text either way.

@@ -73,7 +73,11 @@ fixtures.
 - [x] 7.4 End to end in Notepad: invoke, navigate, apply, one `Ctrl+Z` reverts the whole conversion
       *Through the running release binary: Shift+Pause with Shift held 1.5 s, chooser still on
       screen after 5 s, Enter applied, and a single Ctrl+Z restored the original exactly.*
-- [ ] 7.5 End to end in an application exposing no text pattern, exercising the clipboard read
-- [ ] 7.6 End to end in a browser text field, run twice, confirming both read paths are handled without caching
+- [x] 7.5 End to end in an application exposing no text pattern, exercising the clipboard read
+      *Notepad++ (Scintilla). Covered by the matrix, all four scenarios.*
+- [x] 7.6 End to end in a browser text field, run twice, confirming both read paths are handled without caching
+      *Chrome and Edge, four scenarios each, run repeatedly across three matrix passes.*
 - [ ] 7.7 Confirm the clipboard is intact after apply, after cancel, and after a failed replacement
+      *Apply and cancel are checked in every matrix row. A deliberately failed replacement is
+      not yet exercised — it needs a target that refuses the paste.*
 - [ ] 7.8 Selection conversion works in VS Code and Windows Terminal with the prior clipboard restored in both (migrated from `add-manual-layout-conversion` 8.6; VS Code is not installed on the development machine and Windows Terminal needs a probe that types at a prompt rather than selecting a document — record what could not be covered)

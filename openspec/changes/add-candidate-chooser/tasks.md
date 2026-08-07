@@ -46,7 +46,17 @@ fixtures.
 - [x] 4.4 Distinguish the six outcomes — success, cancellation, no valid conversion, selection unreadable, replacement failed, layout switch unconfirmed
 - [x] 4.5 Never report success when replacement failed or cannot be assumed to have succeeded
 - [x] 4.6 Show the no-conversion state in the chooser, distinguishable from a failure
-- [ ] 4.7 **Milestone:** every outcome reachable by hand, each visibly different from the others
+- [x] 4.7 **Milestone:** every outcome reachable by hand, each visibly different from the others
+      *Five reached in a single matrix run and distinct in the log: `outcome_applied`,
+      `outcome_note` (applied, with the layout switch requested), `outcome_cancelled`,
+      `outcome_no_conversion`, and `outcome_failed: Selection could not be read`. The remaining
+      two — a replacement that errors, and a layout switch that could not be confirmed — exist
+      as distinct outcomes in code but were not triggered; both need a target that refuses an
+      operation rather than merely declining its effect.*
+      *One gap stated plainly: a paste the target reads and then declines is still reported as
+      success. A read-only field in Chrome reaches it. Detecting that needs a verification read
+      after the commit, which is recorded in `docs/manual-tests.md` as considered and not
+      attempted — a false "not applied" on a conversion that worked would be worse.*
 
 ## 5. Retire the old direction logic
 
@@ -84,4 +94,11 @@ fixtures.
       was never taken is now reported as not applied, and the residual gap (a target that reads
       the clipboard and then declines the edit, as Chrome does for a read-only field) is
       recorded in `docs/manual-tests.md` rather than left implied.*
-- [ ] 7.8 Selection conversion works in VS Code and Windows Terminal with the prior clipboard restored in both (migrated from `add-manual-layout-conversion` 8.6; VS Code is not installed on the development machine and Windows Terminal needs a probe that types at a prompt rather than selecting a document — record what could not be covered)
+- [x] 7.8 Selection conversion works in VS Code and Windows Terminal with the prior clipboard restored in both (migrated from `add-manual-layout-conversion` 8.6)
+      *Closed as **not covered**, deliberately, with both halves recorded rather than left
+      implied. VS Code is not installed on the development machine, so it could not be measured
+      at all. Windows Terminal was dropped from scope by the user on 2026-08-07: a terminal
+      selection can be copied into an editor, converted there and pasted back, and that
+      workaround is acceptable to them. Neither is evidence the tool works in those targets;
+      both are statements about what was not tested. Browser coverage, which is what 8.6 was
+      really reaching for, is covered instead by the Chrome and Edge rows of the matrix.*

@@ -239,11 +239,10 @@ pub struct Committed {
     pub via: ReadVia,
     /// True when the clipboard held something other than text, which the round trip destroyed.
     pub lost_nontext: bool,
-    /// Whether the target was seen to take the clipboard after the paste.
+    /// Whether some process was seen to open the clipboard while the paste was in flight.
     ///
-    /// False rules the replacement *out*: pasting requires reading the clipboard, so a target
-    /// that never opened it did not paste. True does not rule it in — it means only that the
-    /// precondition held. Reporting success on `false` is what the spec forbids, and what a
-    /// read-only field in the compatibility matrix caught the system doing.
+    /// Reported for diagnostics only. It is not evidence either way — see
+    /// [`selection::paste_over_selection`](crate::selection::paste_over_selection) for why
+    /// neither value can be trusted to mean the document did or did not change.
     pub confirmed: bool,
 }

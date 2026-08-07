@@ -31,9 +31,10 @@ param(
     [ValidateSet('Notepad', 'Notepad++', 'Chrome', 'Edge')]
     [string[]] $Apps = @('Notepad', 'Notepad++', 'Chrome', 'Edge'),
 
-    [ValidateSet('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion', 'FailedReplacement')]
+    [ValidateSet('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion', 'FailedReplacement',
+                 'NothingSelected')]
     [string[]] $Scenarios = @('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion',
-                              'FailedReplacement'),
+                              'FailedReplacement', 'NothingSelected'),
 
     [string] $OutFile
 )
@@ -248,6 +249,8 @@ function Run-Case([string]$app, [string]$scenario) {
         'NoConversion'   { $INERT }
         # The replacement cannot land, so the text must be exactly as it started.
         'FailedReplacement' { $SRC }
+        # Nothing to read, so nothing to change.
+        'NothingSelected'   { $SRC }
     }
     $expectedLayout = if ($scenario -eq 'ApplyAndSwitch') { 'uk-UA' } else { 'en-US' }
     $actions = switch ($scenario) {
@@ -256,6 +259,7 @@ function Run-Case([string]$app, [string]$scenario) {
         'Cancel'         { 'select all, Shift+Pause, Esc' }
         'NoConversion'   { 'select all, Shift+Pause, Esc' }
         'FailedReplacement' { 'select all in a read-only field, Shift+Pause, Enter' }
+        'NothingSelected'   { 'deselect, Shift+Pause' }
     }
 
     $row = [ordered]@{
@@ -290,7 +294,13 @@ function Run-Case([string]$app, [string]$scenario) {
         Close-Target $app
         return [pscustomobject]$row
     }
-    Chord 0x41 400          # reselect: reading it moved the caret
+    if ($scenario -eq 'NothingSelected') {
+        # Collapse the selection. The hotkey then has nothing to act on, which is a distinct
+        # outcome from a conversion that found nothing to change.
+        Key 0x23 400        # End
+    } else {
+        Chord 0x41 400      # reselect: reading it moved the caret
+    }
 
     Set-Clipboard -Value 'PRIOR-CLIPBOARD'
     Start-Sleep -Milliseconds 250

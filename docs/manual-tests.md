@@ -711,3 +711,14 @@ of the target after the commit — feasible where UI Automation exposes the focu
 text, unavailable elsewhere, and carrying its own risk of reporting a false failure when an
 application legitimately transforms what was pasted. Recorded rather than attempted, because a
 false "not applied" on a conversion that worked is worse than the case it would fix.
+
+## Notepad++ converts the current line when nothing is selected
+
+Noticed in the matrix, not a failure. Every other target reports "nothing is selected" when the
+hotkey is pressed with a collapsed caret; Notepad++ opens the chooser instead, because its
+`Ctrl+C` copies the current line when there is no selection. Committing there would convert the
+whole line the caret is on.
+
+Left as it is. The behaviour belongs to the editor's copy command, the chooser shows exactly
+what would be replaced before anything happens, and suppressing it would mean second-guessing
+what the user's own editor decided a copy means.

@@ -145,10 +145,18 @@ const PASTE_CONSUMED: std::time::Duration = std::time::Duration::from_millis(200
 /// read paths learn it at different moments and neither should snapshot our own payload.
 /// Replace the selection with `text`, reporting whether the target was seen to take it.
 ///
-/// The bool is **not** proof the document changed — nothing available here is. It is the
-/// weaker claim that the target opened the clipboard after the paste chord, which is a
-/// precondition for pasting: a target that never read the clipboard certainly did not paste
-/// from it. `false` therefore means the replacement can be ruled out, not that it is unknown.
+/// The bool is **not** proof the document changed, and it is deliberately not used to report
+/// failure. It says only that some process opened the clipboard while this was waiting, which
+/// is a precondition for pasting and nothing more:
+///
+/// - a target can open the clipboard and then decline the edit — Chrome does exactly that for
+///   a read-only field, so `true` does not mean the text changed;
+/// - a target can read faster than this can start watching, so `false` does not reliably mean
+///   the text did not change.
+///
+/// It was briefly used to report "conversion was not applied", which turned a working Notepad
+/// conversion into a reported failure. Detecting a refused paste needs a verification read of
+/// the target, not this (`docs/manual-tests.md`).
 pub fn paste_over_selection(
     guard: &FocusGuard,
     owner: HWND,
@@ -177,17 +185,19 @@ pub fn paste_over_selection(
 
     let pasted = inject::paste(guard).map_err(SelectionError::Inject);
 
-    // Wait for the target to actually take the clipboard, rather than assuming it has. A fixed
-    // delay is enough for a native edit control and is not enough for a browser: Chrome read
-    // the clipboard after the restore below and pasted the previous contents, so the field
-    // ended up holding the user's old clipboard instead of the conversion
-    // (`docs/testing/run-matrix.ps1` covers exactly this).
+    // Watch for the target taking the clipboard, from the instant the chord goes out.
     //
-    // The settle still runs first: the consumer cannot open the clipboard before the keystroke
-    // has been delivered, and polling from the instant SendInput returns would see the window
-    // between our own write and their read as "nobody wants it".
-    std::thread::sleep(PASTE_SETTLE);
+    // Not after a delay. Our own handle is already closed — the write above is scoped — so
+    // there is nothing of ours to mistake for a consumer, and a target that reads quickly does
+    // so well inside a fixed settle. Sleeping first and polling afterwards misses those
+    // entirely: it reported Notepad, which reads almost immediately, as never having taken the
+    // clipboard at all.
+    //
+    // The wait matters because a browser reads much later than a native edit control. Chrome
+    // read after the restore below and pasted the *previous* clipboard contents into the
+    // document (`docs/testing/run-matrix.ps1` covers exactly this).
     let consumed = clipboard::wait_for_consumer(PASTE_CONSUMED);
+    std::thread::sleep(PASTE_SETTLE);
 
     // Restore regardless of whether the paste worked — the clipboard must not keep our copy
     // of the user's text either way.

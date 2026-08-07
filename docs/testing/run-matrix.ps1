@@ -23,8 +23,16 @@
     Which scenarios to run. Defaults to all four.
 
 .EXAMPLE
-    pwsh -File docs/testing/run-matrix.ps1
-    pwsh -File docs/testing/run-matrix.ps1 -Apps Chrome -Scenarios Apply
+    pwsh -File docs/testing/run-matrix.ps1            # everything, ~30 minutes
+    pwsh -File docs/testing/run-matrix.ps1 -Smoke     # two cases, ~2 minutes
+
+    Or aim it at whatever a change touched:
+
+    -Apps @('Notepad')   -Scenarios @('Apply')            # the UI Automation read path
+    -Apps @('Notepad++') -Scenarios @('Apply')            # the clipboard read path
+    -Apps @('Chrome')    -Scenarios @('Apply')            # the asynchronous paste
+    -Apps @('Notepad')   -Scenarios @('ApplyAndSwitch')   # the layout switch
+    -Apps @('Chrome')    -Scenarios @('FailedReplacement')# a paste the target refuses
 #>
 [CmdletBinding()]
 param(
@@ -36,8 +44,24 @@ param(
     [string[]] $Scenarios = @('Apply', 'ApplyAndSwitch', 'Cancel', 'NoConversion',
                               'FailedReplacement', 'NothingSelected'),
 
-    [string] $OutFile
+    [string] $OutFile,
+
+    # The two most diagnostic cases, for checking a small change without paying for the whole
+    # matrix. Notepad++ exercises the clipboard read path (no text pattern); Chrome exercises the
+    # asynchronous paste, which is where the timing defects have all been. Roughly two minutes
+    # against about half an hour.
+    #
+    # A smoke run is not a substitute for the matrix, only for running it too often. Everything
+    # this project has broken by fixing something else was broken in an application the change
+    # was not aimed at, so the full run is what a batch of changes has to pass before it is
+    # trusted.
+    [switch] $Smoke
 )
+
+if ($Smoke) {
+    $Apps = @('Notepad++', 'Chrome')
+    $Scenarios = @('Apply')
+}
 
 $ErrorActionPreference = 'Stop'
 

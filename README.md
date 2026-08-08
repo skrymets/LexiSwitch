@@ -243,3 +243,12 @@ shipped, and German is the only one of the three with dead keys.
 [`docs/adr/`](docs/adr/README.md) records why the design is the way it is, including the
 alternatives that were rejected; [`docs/manual-tests.md`](docs/manual-tests.md) records what has
 actually been verified by hand, and what broke on the way.
+
+## Known Issues
+
+### ⚠️ [false-positive] Release v0.1.0 is flagged as malicious by VirusTotal :) 
+- This app's released binary v0.1.0 (`71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a`) is treated as malware by 3/71 antivirus scanners on [.exe @ VirusTotal](https://www.virustotal.com/gui/file/71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a/detection).
+- At the same time, only 1/67 security vendor flagged its `.zip` file (`e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75`) as malicious [.zip @ VirusTotal](https://www.virustotal.com/gui/file/e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75/detection).
+
+> 🟢 **Yep!**  
+> This is why **open-source is good** – it allows anyone to inspect the code and verify what exactly it does, and ensure that it does not contain any malicious code.

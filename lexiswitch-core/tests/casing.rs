@@ -594,3 +594,27 @@ fn an_identifier_line_is_trimmed_but_the_break_is_not() {
 fn a_blank_line_does_not_become_a_delimiter() {
     assert_eq!(render("a b\n\nc d", Style::Snake, &plain()), "a_b\n\nc_d");
 }
+
+/// Everything the window computes at paint time, for a selection that is only whitespace.
+///
+/// Reported as a crash: selecting a couple of spaces and opening the case window left it half
+/// drawn and then killed the process. This covers the pure half of that — generating the rows,
+/// fitting each into a row of any width, and asking every toggle whether it would matter — so
+/// that what remains can only be the drawing.
+#[test]
+fn a_whitespace_only_selection_survives_every_paint_computation() {
+    for text in ["   ", " ", "\t", "\n\n", "", "\r\n"] {
+        let strips = Strips::default();
+        let rows = generate(text, &strips);
+        assert_eq!(rows.len(), Style::ALL.len(), "{text:?}");
+        for row in &rows {
+            for width in [0usize, 1, 2, 8, 40, 200] {
+                let p = lexiswitch_core::preview::compact(&row.text, text, width);
+                assert!(p.text.chars().count() <= width.max(1), "{text:?} at {width}");
+            }
+            for toggle in Toggle::ALL {
+                let _ = toggle_affects(text, row.style, &strips, toggle);
+            }
+        }
+    }
+}

@@ -24,9 +24,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Instance', 'Conflict', 'Recorder', 'Recovery', 'Menu', 'Reload', 'Rebind',
-                 'Gating', 'Focus', 'Case')]
+                 'Gating', 'Focus', 'Case', 'Copy')]
     [string[]] $Only = @('Instance', 'Conflict', 'Recorder', 'Recovery', 'Menu', 'Reload',
-                         'Rebind', 'Gating', 'Focus', 'Case')
+                         'Rebind', 'Gating', 'Focus', 'Case', 'Copy')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +40,8 @@ Add-Type -Namespace SH -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);
 [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, System.UIntPtr e);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern uint RegisterClipboardFormatW(string n);
+[DllImport("user32.dll")] public static extern bool IsClipboardFormatAvailable(uint f);
 public delegate bool EnumProc(System.IntPtr h, System.IntPtr l);
 '@
 
@@ -48,6 +50,28 @@ $rel    = Join-Path $root 'target\release\lexiswitch.exe'
 $dbg    = Join-Path $root 'target\debug\lexiswitch.exe'
 $holder = Join-Path $root 'target\debug\examples\probe_hold_hotkey.exe'
 $tmp    = [System.IO.Path]::GetTempPath()
+
+# Refuse to check binaries older than the code. `cargo clippy` produces no binary, `cargo test`
+# builds test harnesses rather than the agent, and a build fails outright while the agent is
+# holding its own executable — each of which has, in this project, left a stale exe under test
+# and a green result about code nobody had changed.
+# Examples are excluded from what the *agent* is measured against: editing a probe cannot change
+# the agent, and a guard that cries wolf is a guard somebody switches off. The probe binary is
+# compared against its own source instead.
+$newestSource = Get-ChildItem -Path $root -Recurse -Include *.rs, Cargo.toml, Cargo.lock -File |
+    Where-Object { $_.FullName -notlike "*\target\*" -and $_.FullName -notlike "*\examples\*" } |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$holderSource = Get-Item (Join-Path $root 'lexiswitch-win\examples\probe_hold_hotkey.rs') -ErrorAction SilentlyContinue
+foreach ($pair in @(@{ exe = $rel; src = $newestSource },
+                    @{ exe = $dbg; src = $newestSource },
+                    @{ exe = $holder; src = $holderSource })) {
+    if (-not (Test-Path $pair.exe)) { Write-Error "missing $($pair.exe) — build it first."; exit 1 }
+    if ($pair.src -and (Get-Item $pair.exe).LastWriteTime -lt $pair.src.LastWriteTime) {
+        Write-Error ("$($pair.exe) is older than $($pair.src.Name). Rebuild before checking, " +
+                     "or this run measures code you are not changing.")
+        exit 1
+    }
+}
 $cfg    = "$env:APPDATA\LexiSwitch\config.toml"
 $state  = "$env:APPDATA\LexiSwitch\state.toml"
 
@@ -578,6 +602,182 @@ if ($Only -contains 'Case') {
         $t2 = (Get-Content $log2 -ErrorAction SilentlyContinue) -join ' '
         Check 'and conversion still works' ($t2 -like '*selection_requested*')
         Key 0x1B 900
+        StopAll
+    }
+    finally {
+        StopAll
+        if (Test-Path $cfgBack)   { Copy-Item $cfgBack $cfg -Force }
+        if (Test-Path $stateBack) { Copy-Item $stateBack $state -Force }
+        else { Remove-Item $state -ErrorAction SilentlyContinue }
+        'configuration and state restored'
+    }
+}
+
+# ---------------------------------------------------------------------------------------
+if ($Only -contains 'Copy') {
+    '--- copying a result without applying it ---'
+    # The clipboard is the whole subject here, so every check reads it directly. What makes
+    # these worth running is the interaction rather than the keystroke: the transaction restores
+    # the clipboard when it ends, and a copy has to survive that.
+    $cfgBack   = Join-Path $tmp 'lexi-config-copy-backup.toml'
+    $stateBack = Join-Path $tmp 'lexi-state-copy-backup.toml'
+    if (Test-Path $cfg)   { Copy-Item $cfg $cfgBack -Force }
+    if (Test-Path $state) { Copy-Item $state $stateBack -Force }
+
+    function Seed2([IntPtr]$np, [string]$text) {
+        [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np)
+        Start-Sleep -Milliseconds 900
+        Chord 0x4E 1200
+        Set-Clipboard -Value $text; Chord 0x56 700; Chord 0x41 500
+    }
+    function ReadBack2([IntPtr]$np) {
+        [void][SH.W]::ShowWindow($np, 9); [void][SH.W]::SetForegroundWindow($np)
+        Start-Sleep -Milliseconds 700
+        Chord 0x41 400; Chord 0x43 700
+        Start-Sleep -Milliseconds 400
+        (Get-Clipboard) -replace "`r`n", "`n"
+    }
+    function OpenWin([IntPtr]$mw, [int]$agentId, [int]$cmd, [string]$class) {
+        [void][SH.W]::PostMessageW($mw, 0x0111, [IntPtr]$cmd, [IntPtr]::Zero)
+        for ($i = 0; $i -lt 25; $i++) {
+            Start-Sleep -Milliseconds 400
+            $h = WindowOf $agentId $class
+            if ($h -ne [IntPtr]::Zero) { [void](WaitForeground $h); return $h } }
+        return [IntPtr]::Zero
+    }
+    # Whether the clipboard currently carries the opt-out the excluded write sets. This says the
+    # exclusion was *requested*; whether Clipboard History honoured it is not readable from here
+    # and is left to the manual checklist rather than asserted.
+    function HistoryExcluded {
+        $f = [SH.W]::RegisterClipboardFormatW('ExcludeClipboardContentFromMonitorProcessing')
+        if ($f -eq 0) { return $false }
+        return [SH.W]::IsClipboardFormatAvailable($f)
+    }
+
+    try {
+        StopAll
+        Remove-Item $state -ErrorAction SilentlyContinue
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n[logging]`nenabled = true`n" -NoNewline
+        Start-Sleep -Milliseconds 500
+        $log = Join-Path $tmp 'lexi-copy.log'
+        $agent = Start-Process $dbg -PassThru -RedirectStandardError $log -RedirectStandardOutput "$log.out" -WindowStyle Hidden
+        Start-Sleep -Seconds 5
+        $w = WindowOf $agent.Id 'LexiSwitchMessageWindow'
+        $np = (Get-Process Notepad -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).MainWindowHandle
+
+        if (-not $np) { Check 'Notepad available for the copy checks' $false } else {
+
+            # --- case window: copy, cancel, and the copy survives -------------------------
+            Seed2 $np 'hello world'
+            $h = OpenWin $w $agent.Id 107 'LexiSwitchCaseWindow'
+            if ($h -eq [IntPtr]::Zero) { Check 'the case window opens to copy' $false } else {
+                Chord 0x52 600                                # Ctrl+R, so Home is `As typed`
+                Key 0x24 300; Key 0x28 300; Key 0x28 300; Key 0x28 300   # -> UPPERCASE
+                Chord 0x43 800                                # Ctrl+C
+                Key 0x1B 1200                                 # Esc
+                Start-Sleep -Seconds 3
+                $clip = (Get-Clipboard) -replace "`r`n", "`n"
+                Check 'a copy survives cancelling' ($clip -ceq 'HELLO WORLD') "clipboard '$clip'"
+                Check 'and the document is untouched' ((ReadBack2 $np).Trim() -ceq 'hello world')
+            }
+
+            # --- copy one, apply another: both survive ------------------------------------
+            # The case trap 1 exists for. Committing pastes and then restores the clipboard, and
+            # without the change that restore puts back the contents from before the transaction.
+            # Seeded mixed-case deliberately: with `hello world` the applied `lowercase` result
+            # equals the seed, and "the document holds the applied style" would pass without the
+            # apply having done anything.
+            Seed2 $np 'Hello World'
+            $h = OpenWin $w $agent.Id 107 'LexiSwitchCaseWindow'
+            if ($h -eq [IntPtr]::Zero) { Check 'the case window opens to copy then apply' $false } else {
+                Chord 0x52 600
+                Key 0x24 300; Key 0x28 300; Key 0x28 300; Key 0x28 300   # UPPERCASE
+                Chord 0x43 800                                # copy it
+                Key 0x26 300                                  # up one, to `lowercase`
+                Key 0x0D 1500                                 # apply that instead
+                Start-Sleep -Seconds 3
+                # The clipboard *first*. Committing pastes and then restores, and without the
+                # change to what it restores this is where the copy is silently overwritten —
+                # reading the document first would destroy the evidence, since reading it means
+                # copying it.
+                $clip = (Get-Clipboard) -replace "`r`n", "`n"
+                Check 'a copy survives committing a different style' ($clip -ceq 'HELLO WORLD') "clipboard '$clip'"
+                $doc = (ReadBack2 $np).Trim()
+                Check 'and the document holds the applied style' ($doc -ceq 'hello world') "document '$doc'"
+            }
+
+            # --- the history opt-out is requested, and H turns it off ----------------------
+            Seed2 $np 'hello world'
+            $h = OpenWin $w $agent.Id 107 'LexiSwitchCaseWindow'
+            if ($h -eq [IntPtr]::Zero) { Check 'the case window opens for the history check' $false } else {
+                Chord 0x52 600
+                Key 0x24 300; Key 0x28 300; Key 0x28 300; Key 0x28 300
+                Chord 0x43 800                                # copy, H off by default
+                Start-Sleep -Milliseconds 400
+                Check 'a copy is kept out of clipboard history by default' (HistoryExcluded)
+                Key 0x48 700                                  # H — and it re-copies
+                Start-Sleep -Milliseconds 500
+                Check 'and H lets it in' (-not (HistoryExcluded))
+                Key 0x1B 1200
+                Start-Sleep -Seconds 2
+                $clip = (Get-Clipboard) -replace "`r`n", "`n"
+                Check 'the re-copy holds the same text' ($clip -ceq 'HELLO WORLD') "clipboard '$clip'"
+            }
+
+            # --- a selection with nothing in it but whitespace -----------------------------
+            # This killed the agent outright. Every identifier style renders whitespace to an
+            # empty string, and drawing empty text handed DrawTextW an empty slice — which
+            # faults inside the window procedure, so Windows terminates the process. Checked in
+            # the expanded view too, which draws its text without going through the same helper.
+            foreach ($blank in @('   ', ' ')) {
+                Seed2 $np $blank
+                $h = OpenWin $w $agent.Id 107 'LexiSwitchCaseWindow'
+                Check "a whitespace-only selection opens the window ('$blank')" ($h -ne [IntPtr]::Zero)
+                if ($h -ne [IntPtr]::Zero) {
+                    Key 0x20 900          # expand
+                    Key 0x20 600          # collapse
+                    Key 0x1B 900
+                }
+                Start-Sleep -Seconds 2
+                Check "and the agent survives it ('$blank')" ([bool](Get-Process -Id $agent.Id -ErrorAction SilentlyContinue))
+            }
+
+            # --- the layout chooser copies too --------------------------------------------
+            Seed2 $np 'Ghbdsn'
+            $h = OpenWin $w $agent.Id 104 'LexiSwitchChooser'
+            if ($h -eq [IntPtr]::Zero) { Check 'the chooser opens to copy' $false } else {
+                Chord 0x43 800
+                Key 0x1B 1200
+                Start-Sleep -Seconds 3
+                $clip = (Get-Clipboard) -replace "`r`n", "`n"
+                Check 'the chooser copies a candidate' ($clip -cne 'Ghbdsn' -and $clip.Length -gt 0) "clipboard '$clip'"
+                Check 'and leaves the document alone' ((ReadBack2 $np).Trim() -ceq 'Ghbdsn')
+            }
+        }
+        StopAll
+
+        # --- copying works with the reading fallback switched off -------------------------
+        # Notepad exposes a text pattern, so the selection is read without the clipboard and the
+        # window opens regardless of the setting. Copying is an instruction, not a fallback.
+        Set-Content -Path $cfg -Value "[hotkeys]`nconvert_selection = `"Win+Shift+Pause`"`n[selection]`nallow_clipboard_fallback = false`n[logging]`nenabled = true`n" -NoNewline
+        Start-Sleep -Milliseconds 500
+        $log2 = Join-Path $tmp 'lexi-copy-nofallback.log'
+        $agent2 = Start-Process $dbg -PassThru -RedirectStandardError $log2 -WindowStyle Hidden
+        Start-Sleep -Seconds 5
+        $w2 = WindowOf $agent2.Id 'LexiSwitchMessageWindow'
+        if ($np) {
+            Seed2 $np 'hello world'
+            $h = OpenWin $w2 $agent2.Id 107 'LexiSwitchCaseWindow'
+            if ($h -eq [IntPtr]::Zero) { Check 'the case window opens with the fallback off' $false } else {
+                Chord 0x52 600
+                Key 0x24 300; Key 0x28 300; Key 0x28 300; Key 0x28 300
+                Chord 0x43 800
+                Key 0x1B 1200
+                Start-Sleep -Seconds 3
+                $clip = (Get-Clipboard) -replace "`r`n", "`n"
+                Check 'copying works with the reading fallback off' ($clip -ceq 'HELLO WORLD') "clipboard '$clip'"
+            }
+        }
         StopAll
     }
     finally {

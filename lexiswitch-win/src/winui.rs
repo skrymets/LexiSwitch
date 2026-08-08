@@ -14,7 +14,8 @@
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, FillRect, GetDC, GetDeviceCaps,
+    CreateFontW, CreateSolidBrush, DeleteObject, DrawFrameControl, DrawTextW, FillRect, GetDC,
+    GetDeviceCaps, DFCS_BUTTONCHECK, DFCS_CHECKED, DFC_BUTTON,
     GetMonitorInfoW, GetSysColor, GetTextMetricsW, MonitorFromWindow, ReleaseDC, SelectObject,
     SetTextColor, CLEARTYPE_QUALITY, COLOR_BTNFACE, DEFAULT_CHARSET, DRAW_TEXT_FORMAT,
     DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, FF_DONTCARE,
@@ -202,6 +203,34 @@ pub fn take_foreground(hwnd: HWND) -> bool {
     false
 }
 
+/// A copy the user made from inside a transaction window.
+///
+/// Carried back to the caller so the transaction can be told that this, and not the contents
+/// from before it started, is what should be on the clipboard when it ends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Copied {
+    pub text: String,
+    /// Whether Windows Clipboard History may keep it.
+    pub exposable: bool,
+}
+
+/// Put a result on the clipboard, honouring the exposure decision.
+///
+/// Returns whether it worked. A window uses that to say `Copied` only when it is true — this
+/// project does not report success it has not observed, and a clipboard that another process is
+/// holding open is exactly the case where an optimistic message would be wrong.
+///
+/// Writing to the clipboard is the one thing these windows may do besides draw. They still
+/// cannot reach the document: they are not given anything that could.
+pub fn copy_result(text: &str, exposable: bool, owner: HWND, attempts: u32) -> bool {
+    let Ok(clip) = crate::clipboard::Clipboard::open(owner, attempts) else {
+        return false;
+    };
+    crate::clipboard::Restore::kept(text.to_string(), exposable)
+        .write(&clip)
+        .is_ok()
+}
+
 /// Whether a window has settled in the foreground, and what losing it means.
 ///
 /// Exists as a type rather than a `bool` field because it was a `bool` field twice and was
@@ -368,6 +397,35 @@ impl Pen {
         self.write(hdc, text, x, y, width, colour, align);
     }
 
+    /// A real checkbox, drawn by Windows.
+    ///
+    /// `DrawFrameControl` rather than a `[x]` in text or a `☑` glyph: it is the control Windows
+    /// draws everywhere else, it needs no font to contain the character, and it reads as a
+    /// checkbox at a glance instead of as punctuation. Returns how much width it used, so the
+    /// label after it can be placed without guessing.
+    pub fn checkbox(&self, hdc: HDC, x: i32, y: i32, checked: bool) -> i32 {
+        let size = (self.line_height - 8 * self.scale).clamp(11 * self.scale, 16 * self.scale);
+        let mut rect = RECT {
+            left: x,
+            // Centred against the text line rather than sitting on it, or a row of boxes and
+            // words reads as two rows.
+            top: y + (self.line_height - size) / 2,
+            right: x + size,
+            bottom: y + (self.line_height - size) / 2 + size,
+        };
+        let mut state = DFCS_BUTTONCHECK;
+        if checked {
+            state |= DFCS_CHECKED;
+        }
+        // SAFETY: `rect` lives for the whole call and `hdc` is valid for this paint. A failure
+        // is reported as a bool and leaves the area undrawn, which is a missing box rather than
+        // anything unsound.
+        unsafe {
+            let _ = DrawFrameControl(hdc, &mut rect, DFC_BUTTON, state);
+        }
+        size
+    }
+
     /// A horizontal separator in the system's control colour.
     pub fn rule(&self, hdc: HDC, left: i32, y: i32, right: i32) {
         let rect = RECT {
@@ -396,6 +454,19 @@ impl Pen {
         colour: COLORREF,
         format: DRAW_TEXT_FORMAT,
     ) {
+        // Nothing to draw is not the same as drawing nothing. `DrawTextW` takes a slice, and an
+        // empty `Vec<u16>` has a dangling pointer — passing it faults *inside the window
+        // procedure*, which Windows answers by killing the process with
+        // STATUS_FATAL_USER_CALLBACK_EXCEPTION. Not a Rust panic, so nothing catches it and no
+        // message is printed; the window is simply half drawn and then the agent is gone.
+        //
+        // Reached by selecting only whitespace: every identifier style renders to an empty
+        // string, and its preview is the first empty text any of these windows had ever been
+        // asked to draw.
+        if text.is_empty() {
+            return;
+        }
+
         let mut rect = RECT {
             left: x,
             top: y,

@@ -36,6 +36,52 @@ use crate::WinError;
 
 const CF_TEXT_U32: u32 = CF_UNICODETEXT.0 as u32;
 
+/// Text destined for the clipboard, and whether Windows Clipboard History may see it.
+///
+/// The two travel together because they are one decision. Restoring text with the wrong answer
+/// is silent and total: a copy the user asked to keep out of history is put *into* history by a
+/// restore that carries only the string, at the end of a transaction, when nobody is looking.
+/// Separating them is what makes that mistake possible, so they are not separated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restore {
+    /// What to put back. `None` means the clipboard is to be cleared — nothing was there
+    /// before, and leaving this program's copy of the user's text would be worse than empty.
+    pub text: Option<String>,
+    /// Whether Clipboard History and clipboard managers may keep it.
+    pub exposable: bool,
+}
+
+impl Restore {
+    /// Text that was already the user's before this program touched it.
+    ///
+    /// Exposable, because it was in their history before any of this began and removing it
+    /// would be a change nobody asked for.
+    pub fn user_owned(text: Option<String>) -> Self {
+        Self {
+            text,
+            exposable: true,
+        }
+    }
+
+    /// Text this program produced and the user asked to keep.
+    pub fn kept(text: String, exposable: bool) -> Self {
+        Self {
+            text: Some(text),
+            exposable,
+        }
+    }
+
+    /// Write it, honouring the exposure decision.
+    pub fn write(&self, clip: &Clipboard) -> Result<(), WinError> {
+        let text = self.text.as_deref().unwrap_or("");
+        if self.exposable {
+            clip.set_text(text)
+        } else {
+            clip.set_text_excluded(text)
+        }
+    }
+}
+
 /// A counter Windows increments every time the clipboard's contents are replaced.
 ///
 /// Readable **without opening the clipboard**, which is the only reason it is used here.

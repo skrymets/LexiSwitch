@@ -71,6 +71,9 @@ const VK_UP_U: usize = 0x26;
 const VK_DOWN_U: usize = 0x28;
 const VK_HOME_U: usize = 0x24;
 const VK_END_U: usize = 0x23;
+const VK_C_U: usize = 0x43;
+const VK_H_U: usize = 0x48;
+const VK_INSERT_U: usize = 0x2D;
 
 /// How the user ended the transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +106,16 @@ struct Chooser<'a> {
     /// First visible line of the expanded view.
     scroll: usize,
     decision: Option<Decision>,
+    /// Where the clipboard can be reached from. Nothing else about what this window is given
+    /// changes: it still cannot modify the document.
+    owner: HWND,
+    attempts: u32,
+    /// Whether a copy may enter Windows Clipboard History. Off every time the window opens.
+    expose_copy: bool,
+    /// What the user has copied, carried out so the transaction stops restoring over it.
+    copied: Option<String>,
+    /// Whether the last copy attempt succeeded. `None` until one has been tried.
+    copy_worked: Option<bool>,
     /// Whether losing activation should be treated as the user clicking away. See
     /// [`winui::Activation`], which exists because this rule was got wrong once it was copied.
     activation: winui::Activation,
@@ -127,7 +140,9 @@ pub fn show(
     candidates: &[Candidate],
     active: Option<&str>,
     expanded_lines: i32,
-) -> Result<Decision, WinError> {
+    owner: HWND,
+    attempts: u32,
+) -> Result<(Decision, Option<winui::Copied>), WinError> {
 
     // SAFETY: the class name is a static wide string with a NUL and the WNDCLASSW is fully
     // initialised before registration. A zero return means the class is already registered by
@@ -158,6 +173,11 @@ pub fn show(
         resized: false,
         scroll: 0,
         decision: None,
+        owner,
+        attempts,
+        expose_copy: false,
+        copied: None,
+        copy_worked: None,
         activation: winui::Activation::new(),
         pen: winui::Pen::new(winui::dpi_scale()),
         expanded_lines: if expanded_lines > 0 {
@@ -235,7 +255,11 @@ pub fn show(
         let _ = DestroyWindow(hwnd);
     }
 
-    Ok(state.decision.unwrap_or(Decision::Cancel))
+    let copied = state.copied.clone().map(|text| winui::Copied {
+        text,
+        exposable: state.expose_copy,
+    });
+    Ok((state.decision.unwrap_or(Decision::Cancel), copied))
 }
 
 
@@ -285,12 +309,38 @@ impl Chooser<'_> {
             + 4 * scale
             + 1.max(scale)
             + 8 * scale
-            + line * 2
+            + line * 3
             + pad
+    }
+
+    /// Put the selected candidate's whole result on the clipboard.
+    ///
+    /// The whole result, never the shortened row preview: this is the same text a commit would
+    /// write, which is what makes copying a substitute for applying and undoing.
+    fn copy_selected(&mut self) {
+        let text = self.candidates[self.selected].text.clone();
+        let worked = winui::copy_result(&text, self.expose_copy, self.owner, self.attempts);
+        self.copy_worked = Some(worked);
+        self.copied = worked.then_some(text);
     }
 
     /// Apply a key press. Returns whether anything changed and the window needs repainting.
     fn key(&mut self, vk: usize, ctrl: bool) -> bool {
+        // Before the empty-candidate guard below: with nothing to copy there is nothing to do,
+        // and these keys must not fall through to the "any key closes it" rule.
+        if !self.candidates.is_empty() {
+            if ctrl && (vk == VK_C_U || vk == VK_INSERT_U) {
+                self.copy_selected();
+                return true;
+            }
+            if vk == VK_H_U && !ctrl {
+                self.expose_copy = !self.expose_copy;
+                if self.copied.is_some() {
+                    self.copy_selected();
+                }
+                return true;
+            }
+        }
         if self.candidates.is_empty() {
             // Nothing to move between and nothing to apply. Any key that means "done" closes
             // it; everything else is ignored rather than silently doing something else.
@@ -462,7 +512,7 @@ impl Chooser<'_> {
         self.pen.draw(
             hdc,
             &format!(
-                "\u{2191}\u{2193} {}    Enter apply    Space {}    Esc cancel",
+                "\u{2191}\u{2193} {}   \u{2502}   Enter apply   \u{2502}   Space {}   \u{2502}   Esc cancel",
                 if self.expanded { "scroll" } else { "choose" },
                 if self.expanded { "collapse" } else { "expand" }
             ),
@@ -475,12 +525,24 @@ impl Chooser<'_> {
         y += self.pen.line_height;
         // Task 3.7: the layout a switching commit would activate is named before the user
         // commits, not discovered afterwards.
+        let copy = match self.copy_worked {
+            None => "Ctrl+C / Ctrl+Ins copy",
+            Some(true) => "Copied \u{2713}",
+            Some(false) => "Copy failed",
+        };
+        let left = format!(
+            "Ctrl+Enter apply and switch typing to {target}   \u{2502}   {copy}   \u{2502}   H"
+        );
+        self.pen.draw(hdc, &left, pad, y, inner, dim, false);
+        let used = (left.chars().count() as i32 + 1) * self.pen.char_width;
+        let box_x = pad + used;
+        let box_w = self.pen.checkbox(hdc, box_x, y, self.expose_copy);
         self.pen.draw(
             hdc,
-            &format!("Ctrl+Enter apply and switch typing to {target}"),
-            pad,
+            "keep the copy in clipboard history",
+            box_x + box_w + 5 * self.pen.scale,
             y,
-            inner,
+            (inner - used - box_w).max(0),
             dim,
             false,
         );
@@ -639,6 +701,12 @@ impl Chooser<'_> {
             false,
         );
         let top = y + self.pen.line_height;
+
+        // An empty candidate has nothing to lay out, and `DrawTextW` faults on an empty slice
+        // from inside the window procedure — see `winui::Pen::write` for what that costs.
+        if candidate.text.is_empty() {
+            return indicator_y + self.pen.line_height + 4 * scale;
+        }
 
         let mut wide: Vec<u16> = candidate.text.encode_utf16().collect();
 

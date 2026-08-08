@@ -1181,3 +1181,116 @@ user who happens to have an identifier style selected must still be able to set 
 box showing `[x]` is the truth about the setting.
 
 Verified after the fixes: 182 unit tests, 47/47 shell checks, 24/24 matrix.
+
+## Copying a result without applying it (2026-08-08)
+
+`Ctrl+C` / `Ctrl+Ins` in either transaction window puts the selected result on the clipboard,
+leaves the document alone, and keeps the window open. `H` decides whether it may enter Windows
+Clipboard History — off every time the window opens.
+
+### The interaction that made this more than a keystroke
+
+The transaction owns the clipboard and restores it when it ends: `cancel` immediately,
+`commit` after the paste. Both would have overwritten the copy — one instantly, one a moment
+later. So `Transaction::clipboard_before` stopped meaning *what was there* and became *what to
+restore*, renamed accordingly, and a deliberate copy replaces it.
+
+**A second trap inside the first.** The restore wrote with plain `set_text`, so a copy the user
+had asked to keep out of Clipboard History would have been put *into* history at the end of the
+transaction — undoing the toggle at the one moment nobody is looking. The restore now carries the
+exposure flag with the text, as one value rather than two.
+
+### The check that could not fail
+
+The first green Copy run asserted "the document and the copy are different styles" after
+committing — and that check could not fail, because reading the document back *is* a copy, so
+the clipboard had already been overwritten before it was examined. Reordered to read the
+clipboard first. It now reads `clipboard 'HELLO WORLD'`, `document 'hello world'`, which is the
+whole point of the change actually being asserted.
+
+The seed was mixed-case for the same reason: with `hello world`, applying `lowercase` produces
+the seed, and "the document holds the applied style" passes whether or not anything happened.
+
+### The stale binary, for the fourth time
+
+A `cargo build --release` failed with "Access is denied" because the agent was holding its own
+executable. The failure scrolled past, the old binary started, and a full matrix run went green
+about code from an hour earlier.
+
+Both harnesses now refuse to run when a binary under test is older than the source, naming
+which file. Examples are excluded from what the *agent* is compared against — editing a probe
+cannot change the agent, and a guard that cries wolf is one somebody switches off.
+
+### Notepad++ minimised and still foreground
+
+Two matrix runs reported five Notepad rows as "could not focus". Notepad++ was **minimised and
+still the foreground window** — a state in which Windows refuses `SetForegroundWindow` from any
+other process, and which the harness's Alt-tap does not clear. Restoring it, tapping Alt, then
+minimising it again releases the lock. Left in the operator's hands rather than automated: it is
+a condition created by running probes, not by the product.
+
+Verified: 182 unit tests, **57/57 shell checks** (10 new), 24/24 matrix, release clean at
+0.75 MB.
+
+## Drawing an empty string killed the agent (2026-08-08)
+
+Reported: selecting a couple of spaces and opening the case window left it half drawn,
+unresponsive, and then the process was gone.
+
+### Exit code 0xC000041D
+
+`STATUS_FATAL_USER_CALLBACK_EXCEPTION` — an exception inside a Win32 callback, which Windows
+answers by terminating the process. Not a Rust panic: no message on stderr, nothing in the
+event log, and a `catch_unwind` added around the whole window procedure never fired. That last
+result is what ruled panics out rather than leaving it a guess.
+
+Instrumenting the paint located it exactly:
+
+```
+DIAG  f: room=72
+DIAG  g: preview=""      <- last line before the process died
+```
+
+**`DrawTextW` was being handed an empty slice.** windows-rs passes the empty `Vec<u16>`'s
+dangling pointer with a count of zero, and the fault happens inside the window procedure.
+
+Whitespace is simply the easiest way to reach it: every identifier style renders `"   "` to an
+empty string, and that preview was the first empty text any of these windows had ever been asked
+to draw. Any empty string anywhere in any of the three windows would have done the same.
+
+**Fixed** in `winui::Pen::write` — nothing to draw returns early — and in both expanded views,
+which call `DrawTextW` directly rather than through it. The `catch_unwind` guard was kept even
+though it did not catch this one: a genuine panic in a paint would otherwise still kill the
+agent, and finding that out the same way twice is not a good use of an afternoon.
+
+### The stale binary, and a guard for it
+
+A `cargo build --release` failed with "Access is denied" — the agent was holding its own
+executable. The failure scrolled past, the old binary started, and a full matrix went green
+about code an hour old.
+
+Both harnesses now refuse to run when a binary under test is older than the source, naming the
+file. Examples are excluded from what the *agent* is compared against, after the guard's first
+firing was a false positive on a probe edit — a guard that cries wolf is one somebody switches
+off.
+
+### Notepad++ minimised and still foreground
+
+Five Notepad rows failed two runs with "could not focus". Notepad++ was **minimised and still
+the foreground window**, a state in which Windows refuses `SetForegroundWindow` from any other
+process and which the harness's Alt-tap does not clear. Restore it, tap Alt, minimise it again.
+Left to the operator: it is a condition created by running probes, not by the product.
+
+### Labelling and layout, from the same pass
+
+`H allows clipboard history` and `H keeps it in clipboard history` were two readings of the same
+words, and neither said which way the option was currently set. Both windows now draw a real
+checkbox — `DrawFrameControl`, not a `[x]` in text and not a `☑` the font may not have — with
+one unambiguous label: **keep the copy in clipboard history**.
+
+The strip options use the same checkbox, the footer's bands are fenced with rules, and the items
+inside a band are separated with `│` rather than run together into something that reads as a
+sentence. Everything that ends the transaction now sits on one line.
+
+Verified: 183 unit tests, **61/61 shell checks** (4 of them new regression checks for the empty
+string), 24/24 matrix.

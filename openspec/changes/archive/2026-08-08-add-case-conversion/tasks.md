@@ -47,14 +47,19 @@ view, behaviour at 150% scale, the footer. The behaviour behind each is asserted
 They are written up as group D of `docs/testing/manual-checklist.md`.
 
 - [x] 5.1 Create the window on the worker thread with its own modal loop, using the shared handshake from 1.1. `Esc` closes it and the document is untouched. Verify the tray stays responsive while it is open.
-- [ ] 5.2 Render the promoted section, the three groups with visible boundaries, and a preview per row using `preview::compact`. Mark rows that would change nothing.
-- [ ] 5.3 Render the toggle strip: two boolean toggles and two exclusive pairs on their own labelled rows, each showing its accelerator digit and its set state, with toggles that would change nothing marked.
+- [x] 5.2 Render the promoted section, the three groups with visible boundaries, and a preview per row using `preview::compact`. Mark rows that would change nothing.
+      *Confirmed by manual group D, 2026-08-08: D1 groups and order, D2 dimming present and selectable, D6 every preview updates at once.*
+- [x] 5.3 Render the toggle strip: two boolean toggles and two exclusive pairs on their own labelled rows, each showing its accelerator digit and its set state, with toggles that would change nothing marked.
+      *Confirmed: D3 the three labelled rows read as pairs, D4 setting one member clears the other. D5 recorded as by-design — dim means "no effect on this style", not disabled.*
 - [x] 5.4 Keys: arrows move between styles; `1`–`6` set the toggles without moving the selection; setting one member of a pair clears the other; every style's preview re-renders on a toggle.
-- [ ] 5.5 `Space` expands the selected style's result, scrollable from the keyboard, with omissions visible; expanding modifies nothing.
+- [x] 5.5 `Space` expands the selected style's result, scrollable from the keyboard, with omissions visible; expanding modifies nothing.
+      *Confirmed: D7. The whole dialog blinked while scrolling; fixed by not asking Windows to erase the background before each repaint.*
 - [x] 5.6 `Ctrl+R` discards the counts in place: the promoted section reverts to declared order and the window stays open.
 - [x] 5.7 `Enter` commits; committing a row marked as changing nothing cancels instead of replacing text with itself. No layout switch is offered.
-- [ ] 5.8 Size the window to its content, and scroll the list keeping the selected row visible when the work-area clamp bites. Check at 100% and 150% scale.
-- [ ] 5.9 Name every binding in the footer.
+- [x] 5.8 Size the window to its content, and scroll the list keeping the selected row visible when the work-area clamp bites. Check at 100% and 150% scale.
+      *Confirmed: D9 at 150%. The list scrolled with nothing on screen to say so; a proportional indicator was added.*
+- [x] 5.9 Name every binding in the footer.
+      *Confirmed: D8, every binding named.*
 
 ## 6. Wiring
 

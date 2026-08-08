@@ -143,7 +143,16 @@ fn main() {
         say!("  drive it yourself: arrows, Space, Enter, Ctrl+Enter, Esc");
     }
 
-    match chooser::show(&source, &found, Some("en-US"), 10) {
+    match chooser::show(
+        &source,
+        &found,
+        Some("en-US"),
+        10,
+        windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+        5,
+    )
+    .map(|(decision, _copied)| decision)
+    {
         Ok(decision) => {
             say!();
             say!("  decision: {decision:?}");

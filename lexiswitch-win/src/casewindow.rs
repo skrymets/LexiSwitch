@@ -67,6 +67,9 @@ const VK_DOWN_U: usize = 0x28;
 const VK_HOME_U: usize = 0x24;
 const VK_END_U: usize = 0x23;
 const VK_R_U: usize = 0x52;
+const VK_C_U: usize = 0x43;
+const VK_H_U: usize = 0x48;
+const VK_INSERT_U: usize = 0x2D;
 const VK_1_U: usize = 0x31;
 
 /// How the user ended the transaction.
@@ -111,6 +114,19 @@ struct CaseWindow<'a> {
     /// screen and the list no longer fits.
     top: usize,
     decision: Option<Decision>,
+    /// Where the clipboard can be reached from. The window is given this and nothing else that
+    /// touches the outside world — it still cannot modify the document.
+    owner: HWND,
+    attempts: u32,
+    /// Whether a copy may enter Windows Clipboard History. Off every time the window opens, so
+    /// exposure is always something asked for in *this* transaction.
+    expose_copy: bool,
+    /// What the user has copied, if anything. Carried out so the transaction can be told to
+    /// stop restoring over it.
+    copied: Option<String>,
+    /// Whether the last copy attempt succeeded, for the line that reports it. `None` until one
+    /// has been tried.
+    copy_worked: Option<bool>,
     activation: winui::Activation,
     pen: winui::Pen,
     expanded_lines: i32,
@@ -128,7 +144,9 @@ pub fn show(
     original: &str,
     usage: &mut Usage,
     expanded_lines: i32,
-) -> Result<Decision, WinError> {
+    owner: HWND,
+    attempts: u32,
+) -> Result<(Decision, Option<winui::Copied>), WinError> {
     // SAFETY: the class name is a static wide string with a NUL and the WNDCLASSW is fully
     // initialised before registration. A zero return means the class is already registered by an
     // earlier invocation, which is harmless — CreateWindowExW below is the real check.
@@ -160,6 +178,11 @@ pub fn show(
         scroll: 0,
         top: 0,
         decision: None,
+        owner,
+        attempts,
+        expose_copy: false,
+        copied: None,
+        copy_worked: None,
         activation: winui::Activation::new(),
         pen: winui::Pen::new(winui::dpi_scale()),
         expanded_lines: if expanded_lines > 0 { expanded_lines } else { 10 },
@@ -225,7 +248,11 @@ pub fn show(
         let _ = DestroyWindow(hwnd);
     }
 
-    Ok(state.decision.clone().unwrap_or(Decision::Cancel))
+    let copied = state.copied.clone().map(|text| winui::Copied {
+        text,
+        exposable: state.expose_copy,
+    });
+    Ok((state.decision.clone().unwrap_or(Decision::Cancel), copied))
 }
 
 impl CaseWindow<'_> {
@@ -309,15 +336,34 @@ impl CaseWindow<'_> {
                 })
                 .sum()
         };
-        pad + line * 2 + 6 * scale + self.rule_height() + body + self.rule_height()
-            + line * 3
+        // Every term matches a step the paint takes, in the same order, so the two cannot
+        // drift: header, selected line, rule, body, then the footer's three fenced bands.
+        pad + line * 2
+            + 6 * scale
+            + self.rule_height()
+            + body
+            + self.rule_height() * 3
+            + line * 5
             + 4 * scale
-            + line * 2
             + pad
     }
 
     fn rule_height(&self) -> i32 {
         8 * self.pen.scale + 1.max(self.pen.scale)
+    }
+
+    /// Put the selected style's whole result on the clipboard.
+    ///
+    /// The whole result, never the shortened preview: what is copied is the same text a commit
+    /// would write, which is the only thing that makes copying a substitute for applying and
+    /// undoing.
+    fn copy_selected(&mut self) {
+        let text = self.row().text.clone();
+        let worked = winui::copy_result(&text, self.expose_copy, self.owner, self.attempts);
+        self.copy_worked = Some(worked);
+        // Only recorded as copied when it actually reached the clipboard. Reporting it
+        // otherwise would have the transaction stop restoring over something that is not there.
+        self.copied = worked.then_some(text);
     }
 
     /// Recompute every result. Cheap, and the alternative is a cache that can be stale.
@@ -327,6 +373,23 @@ impl CaseWindow<'_> {
 
     /// Apply a key press. Returns whether anything changed and the window needs repainting.
     fn key(&mut self, vk: usize, ctrl: bool) -> bool {
+        // Copying, in place: the window stays open, the transaction stays live, and the
+        // document is untouched. Ctrl+Insert as well as Ctrl+C, because both are copy.
+        if ctrl && (vk == VK_C_U || vk == VK_INSERT_U) {
+            self.copy_selected();
+            return true;
+        }
+        // Whether a copy may enter Clipboard History. Deliberately not a seventh strip option:
+        // those six change the text, and this changes only what happens to a copy of it.
+        if vk == VK_H_U && !ctrl {
+            self.expose_copy = !self.expose_copy;
+            // Bring the clipboard into line rather than letting it hold text under the old
+            // answer while the footer states the new one.
+            if self.copied.is_some() {
+                self.copy_selected();
+            }
+            return true;
+        }
         // Discarding the counts, in place: the window stays open and the document untouched.
         if ctrl && vk == VK_R_U {
             self.usage.reset();
@@ -467,7 +530,9 @@ impl CaseWindow<'_> {
         y += self.rule_height();
 
         // --- body --------------------------------------------------------------------
-        let footer_height = self.rule_height() + self.pen.line_height * 5 + 4 * scale + pad;
+        // rule, three toggle rows, rule, the navigation line, rule, the action line.
+        let footer_height =
+            self.rule_height() * 3 + self.pen.line_height * 5 + 4 * scale + pad;
         let body_bottom = client.bottom - footer_height;
         if self.expanded {
             self.paint_expanded(hdc, pad, y, inner, client, body_bottom, text_colour, dim);
@@ -481,9 +546,15 @@ impl CaseWindow<'_> {
         y += self.rule_height();
         y = self.paint_toggles(hdc, pad, y, inner, text_colour, dim);
         y += 4 * scale;
+
+        // Each band of the footer is fenced off from the next, and the items inside a band are
+        // fenced from each other. Run together on one line they read as a sentence, which is
+        // exactly how a list of separate keys should not read.
+        self.pen.rule(hdc, pad, y, full - pad);
+        y += self.rule_height();
         self.pen.draw(
             hdc,
-            "\u{2191}\u{2193} choose    1-6 strip    Space expand    Ctrl+R reset order",
+            "\u{2191}\u{2193} choose   \u{2502}   1-6 strip   \u{2502}   Space expand   \u{2502}   Ctrl+R reset order",
             pad,
             y,
             inner,
@@ -491,16 +562,37 @@ impl CaseWindow<'_> {
             false,
         );
         y += self.pen.line_height;
+        self.pen.rule(hdc, pad, y, full - pad);
+        y += self.rule_height();
+
+        // Everything that ends the transaction, plus copying, on one line. The history choice is
+        // a checkbox rather than a sentence: "H allows clipboard history" and "H keeps it in
+        // clipboard history" were two readings of the same words, and neither said which way it
+        // was currently set.
+        let apply = if self.row().changes {
+            "Enter apply"
+        } else {
+            "Enter closes, changing nothing"
+        };
+        let copy = match self.copy_worked {
+            None => "Ctrl+C / Ctrl+Ins copy",
+            Some(true) => "Copied \u{2713}",
+            Some(false) => "Copy failed",
+        };
+        let left = format!("{apply}   \u{2502}   Esc cancel   \u{2502}   {copy}   \u{2502}   H");
+        self.pen.draw(hdc, &left, pad, y, inner, dim, false);
+
+        // The checkbox and its label follow that text, placed from its measured width so they
+        // cannot land on top of it.
+        let used = (left.chars().count() as i32 + 1) * self.pen.char_width;
+        let box_x = pad + used;
+        let box_w = self.pen.checkbox(hdc, box_x, y, self.expose_copy);
         self.pen.draw(
             hdc,
-            if self.row().changes {
-                "Enter apply    Esc cancel"
-            } else {
-                "Enter closes without changing anything    Esc cancel"
-            },
-            pad,
+            "keep the copy in clipboard history",
+            box_x + box_w + 5 * scale,
             y,
-            inner,
+            (inner - used - box_w).max(0),
             dim,
             false,
         );
@@ -688,7 +780,6 @@ impl CaseWindow<'_> {
                     .position(|t| t == toggle)
                     .map(|n| n + 1)
                     .unwrap_or(0);
-                let mark = if self.strips.is_set(*toggle) { "x" } else { " " };
                 // Same rule as the rows: dim when flipping it would not change this result.
                 let colour = if casing::toggle_affects(self.original, style, &self.strips, *toggle)
                 {
@@ -696,12 +787,14 @@ impl CaseWindow<'_> {
                 } else {
                     dim
                 };
+                let x = pad + heading_width + column * i as i32;
+                let box_w = self.pen.checkbox(hdc, x, y, self.strips.is_set(*toggle));
                 self.pen.draw(
                     hdc,
-                    &format!("{number} [{mark}] {}", toggle.label()),
-                    pad + heading_width + column * i as i32,
+                    &format!("{number}  {}", toggle.label()),
+                    x + box_w + 5 * self.pen.scale,
                     y,
-                    column,
+                    column - box_w - 5 * self.pen.scale,
                     colour,
                     false,
                 );
@@ -742,6 +835,13 @@ impl CaseWindow<'_> {
             false,
         );
         let text_top = top + self.pen.line_height;
+
+        // An empty result has nothing to lay out, and handing `DrawTextW` an empty slice faults
+        // inside the window procedure — see `winui::Pen::write`. Reached by expanding an
+        // identifier style over a selection that is only whitespace.
+        if text.is_empty() {
+            return;
+        }
 
         let mut wide: Vec<u16> = text.encode_utf16().collect();
         let mut measured = RECT {
@@ -847,6 +947,35 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     // at a time, so no other reference to the same `CaseWindow` is live during this call.
     let state = unsafe { &mut *ptr };
 
+    // A panic must not cross back into Windows. Unwinding out of a window procedure is what
+    // Windows answers with STATUS_FATAL_USER_CALLBACK_EXCEPTION — it kills the whole process,
+    // taking the user's agent with it, and the panic message never reaches anywhere useful
+    // because the kill happens at the callback boundary.
+    //
+    // So the body is caught, reported, and the message treated as unhandled. A window that
+    // draws wrongly is a bug; a window that ends the program because it drew wrongly is a
+    // different and much worse one.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        dispatch(state, hwnd, msg, wp, lp)
+    })) {
+        Ok(result) => result,
+        Err(payload) => {
+            let what = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "a panic with no message".to_string());
+            eprintln!("case_window_panic msg=0x{msg:04X}: {what}");
+            use std::io::Write;
+            let _ = std::io::stderr().flush();
+            // SAFETY: forwarding the exact arguments Windows passed.
+            unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+        }
+    }
+}
+
+/// Everything the window procedure does, with the panic guard wrapped around it.
+fn dispatch(state: &mut CaseWindow, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();

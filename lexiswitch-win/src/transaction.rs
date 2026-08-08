@@ -32,7 +32,7 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::IUIAutomation;
 
-use crate::clipboard::Clipboard;
+use crate::clipboard::{self, Clipboard};
 use crate::inject::{self, FocusGuard};
 use crate::selection::{self, ReadVia, SelectionError};
 
@@ -53,8 +53,13 @@ pub struct Transaction {
     via: ReadVia,
     /// The window the text was selected in, to be given the foreground back.
     target: FocusGuard,
-    /// What the clipboard held before the read, when the read disturbed it.
-    clipboard_before: Option<String>,
+    /// What to put on the clipboard when this ends, when the clipboard was disturbed at all.
+    ///
+    /// Named for what it is *for* rather than where it came from. It starts as the text that
+    /// was there before the read, and a deliberate copy replaces it — at which point a field
+    /// called `before` would be holding something captured in the middle of the transaction,
+    /// which is exactly how the next reader gets this wrong.
+    restore_to: clipboard::Restore,
     /// Whether reading cost the clipboard something that is not text.
     lost_nontext: bool,
     /// Whether the read touched the clipboard at all. The automation path does not.
@@ -88,7 +93,7 @@ impl Transaction {
                     original,
                     via: ReadVia::Automation,
                     target,
-                    clipboard_before: None,
+                    restore_to: clipboard::Restore::user_owned(None),
                     lost_nontext: false,
                     clipboard_disturbed: false,
                     owner,
@@ -113,7 +118,7 @@ impl Transaction {
             original,
             via: ReadVia::Clipboard,
             target,
-            clipboard_before: read.previous.take(),
+            restore_to: clipboard::Restore::user_owned(read.previous.take()),
             lost_nontext: read.lost_nontext,
             clipboard_disturbed: true,
             owner,
@@ -168,10 +173,13 @@ impl Transaction {
         // Getting this wrong empties the clipboard instead of restoring it, because "no
         // snapshot" and "the clipboard was empty" are the same value.
         let (before, lost_nontext) = if self.clipboard_disturbed {
-            (self.clipboard_before.clone(), self.lost_nontext)
+            (self.restore_to.clone(), self.lost_nontext)
         } else {
             match Clipboard::open(self.owner, self.attempts) {
-                Ok(clip) => (clip.text(), clip.holds_nontext()),
+                Ok(clip) => (
+                    clipboard::Restore::user_owned(clip.text()),
+                    clip.holds_nontext(),
+                ),
                 Err(e) => return Err(SelectionError::Busy(e)),
             }
         };
@@ -216,12 +224,24 @@ impl Transaction {
             return Ok(());
         }
         let clip = Clipboard::open(self.owner, self.attempts).map_err(SelectionError::Busy)?;
-        match &self.clipboard_before {
-            Some(text) => clip.set_text(text).map_err(SelectionError::Win),
-            // Nothing was there before. Leaving our copy of the user's selection would be
-            // worse than an empty clipboard.
-            None => clip.set_text("").map_err(SelectionError::Win),
-        }
+        // `Restore` decides between the plain and the excluded write. Nothing was there before
+        // is a `None` inside it, and clears rather than leaving this program's copy of the
+        // user's selection behind.
+        self.restore_to.write(&clip).map_err(SelectionError::Win)
+    }
+
+    /// The user has asked for this text to be on the clipboard when the transaction ends.
+    ///
+    /// Replaces what would otherwise be put back. Cancelling restores the clipboard the
+    /// transaction disturbed *on the user's behalf* — a copy they asked for is not that, and
+    /// restoring over it would undo the only thing the transaction was invoked to produce.
+    ///
+    /// Marking the clipboard disturbed is what makes the commit path work without a second
+    /// special case: it already prefers the stored state when the clipboard was touched, so the
+    /// paste restores this afterwards rather than the contents from before.
+    pub fn keep_on_clipboard(&mut self, text: String, exposable: bool) {
+        self.restore_to = clipboard::Restore::kept(text, exposable);
+        self.clipboard_disturbed = true;
     }
 }
 

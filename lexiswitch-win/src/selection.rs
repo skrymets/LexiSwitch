@@ -208,7 +208,7 @@ pub fn paste_over_selection(
     owner: HWND,
     text: &str,
     attempts: u32,
-    previous: Option<String>,
+    previous: clipboard::Restore,
 ) -> Result<bool, SelectionError> {
     // Never paste nothing. Pasting an empty clipboard over a selection deletes it — the worst
     // outcome a conversion can have, and indistinguishable from the program eating the user's
@@ -248,13 +248,13 @@ pub fn paste_over_selection(
     let consumed = clipboard::wait_for_consumer(PASTE_CONSUMED);
 
     // Restore regardless of whether the paste worked — the clipboard must not keep our copy
-    // of the user's text either way.
-    let restored = ClipboardRead {
-        text: None,
-        previous,
-        lost_nontext: false,
-    }
-    .restore(owner, attempts);
+    // of the user's text either way. `previous` carries its own answer about Clipboard
+    // History, because it is not always the user's own text any more: a result the user copied
+    // during the transaction is restored here too, and restoring it plainly would put it into
+    // the history that copying it deliberately kept it out of.
+    let restored = Clipboard::open(owner, attempts)
+        .map_err(SelectionError::Busy)
+        .and_then(|clip| previous.write(&clip).map_err(SelectionError::Win));
 
     pasted?;
     restored?;
@@ -320,7 +320,7 @@ pub fn convert_selection(
                 (clip.text(), clip.holds_nontext())
             };
 
-            paste_over_selection(&guard, owner, &converted, attempts, previous)?;
+            paste_over_selection(&guard, owner, &converted, attempts, clipboard::Restore::user_owned(previous))?;
             return Ok(Converted {
                 via: ReadVia::Automation,
                 text: converted,
@@ -353,7 +353,7 @@ pub fn convert_selection(
         });
     };
 
-    paste_over_selection(&guard, owner, &converted, attempts, read.previous.take())?;
+    paste_over_selection(&guard, owner, &converted, attempts, clipboard::Restore::user_owned(read.previous.take()))?;
 
     Ok(Converted {
         via: ReadVia::Clipboard,

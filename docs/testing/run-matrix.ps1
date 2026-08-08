@@ -436,8 +436,28 @@ function Run-Case([string]$app, [string]$scenario) {
 
 # --- run ---------------------------------------------------------------------------------
 
-if (-not (Get-Process lexiswitch -ErrorAction SilentlyContinue)) {
+$agent = Get-Process lexiswitch -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $agent) {
     Write-Error 'lexiswitch is not running. Start the build under test first.'
+    exit 1
+}
+
+# Refuse to measure a binary older than the code. This has now cost this project four separate
+# investigations: a build that failed because the agent was holding its own executable, a
+# `cargo clippy` that produces no binary at all, a `cargo test` that builds test harnesses and
+# not the agent — each time leaving a stale exe running and a green result that meant nothing.
+#
+# A green matrix is only worth having if it is about the code in the working tree, so this
+# compares the running image against every source file rather than trusting whoever started it.
+$newestSource = Get-ChildItem -Path $root -Recurse -Include *.rs, Cargo.toml, Cargo.lock -File |
+    Where-Object { $_.FullName -notlike "*\target\*" -and $_.FullName -notlike "*\examples\*" } |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$image = Get-Item $agent.Path -ErrorAction SilentlyContinue
+if ($newestSource -and $image -and $image.LastWriteTime -lt $newestSource.LastWriteTime) {
+    Write-Error ("The running agent is older than the source.`n" +
+        "  running: $($image.FullName)  ($($image.LastWriteTime))`n" +
+        "  newest source: $($newestSource.FullName)  ($($newestSource.LastWriteTime))`n" +
+        "Rebuild and restart it, or this run measures code you are not changing.")
     exit 1
 }
 

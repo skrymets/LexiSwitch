@@ -173,7 +173,15 @@ fn main() {
     }
 
     say!("  opening the chooser — leave the mouse and keyboard alone");
-    let decision = chooser::show(transaction.original(), &found, Some("en-US"), 10);
+    let decision = chooser::show(
+        transaction.original(),
+        &found,
+        Some("en-US"),
+        10,
+        windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+        5,
+    )
+    .map(|(decision, _copied)| decision);
 
     if hold_shift {
         send(&[key(VK_SHIFT, true)]);

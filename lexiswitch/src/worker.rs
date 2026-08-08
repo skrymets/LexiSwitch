@@ -192,12 +192,24 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                         // which is why it runs here and not on the message loop: the tray has
                         // to stay alive while a chooser is open.
                         let empty = found.is_empty();
+                        let mut transaction = transaction;
                         match chooser::show(
                             transaction.original(),
                             &found,
                             active.as_deref(),
                             expanded_lines,
-                        ) {
+                            owner,
+                            5,
+                        )
+                        .map(|(decision, copied)| {
+                            // Before either ending. A copy the user asked for replaces what the
+                            // transaction would otherwise put back, so cancelling and committing
+                            // both leave it on the clipboard rather than restoring over it.
+                            if let Some(c) = copied {
+                                transaction.keep_on_clipboard(c.text, c.exposable);
+                            }
+                            decision
+                        }) {
                             Err(e) => {
                                 // The window could not take the foreground, so it could never
                                 // have been typed into. Nothing was modified.
@@ -273,7 +285,23 @@ fn change_case(
         }
     };
 
-    match casewindow::show(transaction.original(), usage, expanded_lines) {
+    let mut transaction = transaction;
+    let shown = casewindow::show(
+        transaction.original(),
+        usage,
+        expanded_lines,
+        owner,
+        5,
+    )
+    .map(|(decision, copied)| {
+        // Before either ending, so a copy survives cancelling and committing alike.
+        if let Some(c) = copied {
+            transaction.keep_on_clipboard(c.text, c.exposable);
+        }
+        decision
+    });
+
+    match shown {
         Err(e) => {
             // The window could not take the foreground, so it could never have been typed
             // into. Nothing was modified.

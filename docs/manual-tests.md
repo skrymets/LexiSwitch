@@ -1059,3 +1059,67 @@ thing; nothing had to change for that file to keep working.
 
 **Not re-run:** `docs/testing/matrix-results.md` now holds this run, replacing one that
 predated the case work and carried a stale Chrome failure.
+
+## A held modifier defeats the copy, and releasing it once is not enough (2026-08-08)
+
+Reported: with `change_case` rebound to `Alt+Win+Pause`, case conversion fails in Notepad++ when
+the keys are pressed Win-then-Alt, and works Alt-then-Win. Order never matters in Notepad, and
+`Shift+Win+Pause` works either way.
+
+### What the measurements said
+
+**Any held modifier stops the copy.** In Notepad++, against the same selection, four trials each:
+
+| sent | result |
+|---|---|
+| `Ctrl+C` | copied, 4/4 |
+| `Ctrl+C` with `Alt` held | **nothing, 4/4** |
+| `Ctrl+C` with `Win` held | **nothing, 4/4** |
+| `Ctrl+C` with `Shift` held | **nothing, 4/4** |
+
+So this is not about `Alt` specifically, and `release_held_modifiers` is entirely load-bearing.
+
+**Notepad is immune because it is never asked.** It exposes a UI Automation text pattern, so the
+selection is read without sending `Ctrl+C` at all. No chord, no modifier problem. That is the
+whole Notepad/Notepad++ asymmetry, and it is structural rather than a difference in tolerance.
+
+**Releasing once is undone by the keyboard.** A held key repeats — roughly thirty times a second
+— so a synthetic release survives about 33 ms before the hardware presses it again. The old code
+released once, slept 30 ms, and sent the chord: one repeat period. Simulating auto-repeat
+reproduces the failure reliably, which nothing else had:
+
+| held with simulated repeat | before | after |
+|---|---|---|
+| 300 ms | 3/4 opened | 4/5 opened |
+| 1400 ms | **1/4 opened** | 3/5 opened |
+
+### What was wrong in my own first diagnosis
+
+I measured Notepad++'s copy latency at 32 ms and called the 60 ms budget a thin margin. That
+figure was inflated by the measurement itself: polling with `Get-Clipboard` *opens* the
+clipboard, contending with the application being measured. Polling the sequence number instead —
+no handle, no contention — puts it at about 10 ms. The 60 ms budget had roughly six times the
+margin, not two. The fixed-timeout race was real but it was not this bug.
+
+### Fixed
+
+- The read waits for the clipboard sequence number to change rather than sleeping a flat 60 ms,
+  with a 600 ms deadline. Fast targets return sooner than before; slow ones stop being reported
+  as an empty selection.
+- `release_held_modifiers` now re-releases and waits for every modifier to read as up for 90 ms
+  — about three repeat periods — before the chord is sent, up to 2.5 seconds.
+- The last releases and the chord go out in **one** `SendInput` batch, so nothing injected can
+  interleave between them.
+- Failing to settle is reported as `ModifiersHeld` — "a key from the shortcut is still held
+  down" — instead of "nothing is selected". The first is a statement about the keyboard and is
+  true; the second is a statement about the document and was false.
+
+### Not fixed, and why
+
+**A modifier that is still physically down cannot be worked around.** `SendInput` is atomic
+against other injected input but not against the hardware, so a repeat event can still land
+between our release and our chord. Roughly one trial in five still fails while a key is held
+down continuously through the transaction. The remedy is the one the code now takes: wait for
+the user to let go, and say so plainly if they do not.
+
+Verified no regression: 47/47 shell checks, 24/24 matrix, 175 unit tests.

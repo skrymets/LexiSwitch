@@ -25,7 +25,7 @@ use std::{thread, time::Duration};
 use windows::core::w;
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
-    GetOpenClipboardWindow,
+    GetClipboardSequenceNumber, GetOpenClipboardWindow,
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
     IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
 };
@@ -35,6 +35,21 @@ use windows::Win32::System::Ole::{CF_LOCALE, CF_OEMTEXT, CF_TEXT, CF_UNICODETEXT
 use crate::WinError;
 
 const CF_TEXT_U32: u32 = CF_UNICODETEXT.0 as u32;
+
+/// A counter Windows increments every time the clipboard's contents are replaced.
+///
+/// Readable **without opening the clipboard**, which is the only reason it is used here.
+/// Waiting for a copy to land by repeatedly opening and reading would contend with the very
+/// application being waited for: while this process holds the clipboard, the target's own
+/// `OpenClipboard` fails, and an application that cannot open the clipboard to write its copy
+/// simply does not copy. Polling a counter cannot interfere with anything.
+///
+/// The value is not comparable across sessions and means nothing on its own; only a change in
+/// it carries information.
+pub fn sequence_number() -> u32 {
+    // SAFETY: no preconditions; reads a global counter and cannot fail.
+    unsafe { GetClipboardSequenceNumber() }
+}
 
 /// Wait for another process to open the clipboard and let go of it again.
 ///

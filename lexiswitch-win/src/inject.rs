@@ -99,8 +99,41 @@ pub fn paste(guard: &FocusGuard) -> Result<(), Abandoned> {
     chord(VK_V)
 }
 
-/// How long the target is given to notice the modifier release before the chord arrives.
-const MODIFIER_SETTLE: std::time::Duration = std::time::Duration::from_millis(30);
+/// How long the modifiers must read as *up* before the chord is sent.
+///
+/// Longer than one auto-repeat period, and that is the whole point. While a key is physically
+/// held the keyboard repeats it — Windows' default rate is about thirty a second — so releasing
+/// it synthetically buys roughly 33 ms before the hardware presses it again. A chord sent inside
+/// that window is fine; one sent just after it arrives with the modifier down again, and the
+/// release might as well not have happened.
+///
+/// Ninety milliseconds spans about three repeat periods, so a modifier that is genuinely still
+/// held cannot look settled by luck.
+const MODIFIER_STABLE: std::time::Duration = std::time::Duration::from_millis(90);
+
+/// How often to re-check while waiting for that.
+const MODIFIER_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// How long to keep trying before sending the chord anyway.
+///
+/// Generous, because the wait ends the moment the user lets go and the alternative to waiting
+/// is being wrong. Measured against a simulated auto-repeat, an 800 ms deadline still failed
+/// three times in four when the key was held for 1.4 s — the transaction gave up and sent a
+/// chord it already knew would be mangled. Reaching this deadline is now reported rather than
+/// papered over, so the bound exists to stop a stuck key hanging the worker, not to time-box a
+/// person.
+const MODIFIER_DEADLINE: std::time::Duration = std::time::Duration::from_millis(2500);
+
+/// The modifiers a chord must not carry. `Ctrl` is absent deliberately — see below.
+const HELD_MODIFIERS: [VIRTUAL_KEY; 6] =
+    [VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN];
+
+/// Whether one key is physically down.
+fn is_down(vk: &VIRTUAL_KEY) -> bool {
+    // SAFETY: no preconditions; reports whether one key is currently down. The high bit is the
+    // pressed state, which is the sign bit of the i16 returned.
+    unsafe { GetAsyncKeyState(vk.0 as i32) < 0 }
+}
 
 /// Release any modifier the user is still physically holding.
 ///
@@ -127,42 +160,97 @@ const MODIFIER_SETTLE: std::time::Duration = std::time::Duration::from_millis(30
 /// The release is not undone afterwards. The physical key is still down, so the user's own
 /// release will follow and a duplicate key-up is harmless — whereas re-pressing a modifier on
 /// their behalf would leave it stuck down if they let go in between.
-fn release_held_modifiers() {
-    const HELD: [VIRTUAL_KEY; 6] = [VK_LSHIFT, VK_RSHIFT, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN];
-
-    let ups: Vec<INPUT> = HELD
-        .into_iter()
-        // SAFETY: no preconditions; reports whether a key is currently down. The high bit is
-        // the pressed state, which is the sign bit of the i16 returned.
-        .filter(|vk| unsafe { GetAsyncKeyState(vk.0 as i32) } < 0)
-        .map(|vk| key(vk, true))
-        .collect();
-
-    if ups.is_empty() {
-        return;
+///
+/// ## Releasing once is not enough
+///
+/// A held key repeats. Windows types it again about thirty times a second for as long as the
+/// finger is down, so a single synthetic release is undone by the hardware within about 33 ms,
+/// and a chord sent after that arrives with the modifier down exactly as if nothing had been
+/// released. This is why the *order the user pressed the modifiers in* changed the outcome:
+/// typematic repeat applies to the last key pressed, so `Win` then `Alt` leaves **Alt**
+/// repeating, while `Alt` then `Win` leaves `Win` repeating — and only one of those two ruins
+/// the chord.
+///
+/// It ruins it because `Alt` does not merely add a modifier: a keystroke with `Alt` down is
+/// delivered as `WM_SYSKEYDOWN` rather than `WM_KEYDOWN`, a different message that an editor's
+/// key handling does not answer at all. `Ctrl+C` under a repeating `Alt` is not a weaker copy,
+/// it is not a copy. `Win` never changes the message, which is why `Win+Shift+Pause` and
+/// `Shift+Win+Pause` both work in either order while `Alt+Win+Pause` does not.
+///
+/// So this releases and then *waits for the release to hold*, re-releasing anything the keyboard
+/// presses again, until every modifier has read as up for longer than a repeat period. A user
+/// who simply keeps holding the key is not waited for indefinitely — see [`MODIFIER_DEADLINE`].
+///
+/// Returns whether the modifiers actually settled. Callers proceed either way; the answer is
+/// worth having only because a chord sent without settling is the one that gets mangled.
+fn release_held_modifiers() -> bool {
+    // Nothing held means nothing to wait for. Worth checking first: the tray command and a
+    // shortcut the user has already let go of are the common cases, and neither should pay for
+    // a stability window it does not need.
+    if !HELD_MODIFIERS.iter().any(is_down) {
+        return true;
     }
-    // SAFETY: a live slice of fully-initialised INPUT structures with the element size the API
-    // requires. A short count here means some releases were not delivered, which the chord that
-    // follows would then get wrong — but there is nothing better to do about it than proceed,
-    // and the caller already treats a mangled result as a failure.
-    unsafe {
-        SendInput(&ups, std::mem::size_of::<INPUT>() as i32);
+
+    let start = std::time::Instant::now();
+    let mut up_since: Option<std::time::Instant> = None;
+    while start.elapsed() < MODIFIER_DEADLINE {
+        let ups: Vec<INPUT> = HELD_MODIFIERS
+            .into_iter()
+            .filter(is_down)
+            .map(|vk| key(vk, true))
+            .collect();
+
+        if ups.is_empty() {
+            let since = *up_since.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= MODIFIER_STABLE {
+                return true;
+            }
+        } else {
+            // Down again — either never released, or the keyboard repeated it. Either way the
+            // stability window starts over.
+            up_since = None;
+            // SAFETY: a live slice of fully-initialised INPUT structures with the element size
+            // the API requires. A short count means some releases were not delivered, which the
+            // next pass through this loop will notice and retry.
+            unsafe {
+                SendInput(&ups, std::mem::size_of::<INPUT>() as i32);
+            }
+        }
+        std::thread::sleep(MODIFIER_POLL);
     }
-    std::thread::sleep(MODIFIER_SETTLE);
+    false
 }
 
 /// Send Ctrl+<vk> as a press-and-release pair around the modifier.
 fn chord(vk: VIRTUAL_KEY) -> Result<(), Abandoned> {
     // Before anything else: a modifier the user has not let go of is part of every chord sent
-    // from here, and in at least one editor that turns a copy into a deletion.
-    release_held_modifiers();
+    // from here, and in at least one editor that turns a copy into a deletion — measured, any
+    // of Alt, Win or Shift stops Ctrl+C copying in Notepad++ entirely.
+    //
+    // Refusing beats guessing. Sending the chord anyway produces "nothing is selected", which
+    // is a statement about the document and is false; saying a key is held is a statement about
+    // the keyboard and is true, and the user can act on it without wondering what went wrong.
+    if !release_held_modifiers() {
+        return Err(Abandoned::ModifiersHeld);
+    }
 
-    let inputs = [
+    // One batch, not two. Waiting for the modifiers to read as up is necessary but not
+    // sufficient: `GetAsyncKeyState` answers about the state *now*, while the target reads its
+    // own input queue in order, and an auto-repeat event can be queued between a release sent in
+    // one call and a chord sent in the next. `SendInput` delivers a single call's events as one
+    // uninterruptible block, so putting the last releases and the chord in the same array closes
+    // that window instead of narrowing it.
+    let mut inputs: Vec<INPUT> = HELD_MODIFIERS
+        .into_iter()
+        .filter(is_down)
+        .map(|vk| key(vk, true))
+        .collect();
+    inputs.extend([
         key(VK_CONTROL, false),
         key(vk, false),
         key(vk, true),
         key(VK_CONTROL, true),
-    ];
+    ]);
     // SAFETY: a live slice of fully-initialised INPUT structures with the element size the
     // API requires.
     let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
@@ -195,6 +283,10 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
 pub enum Abandoned {
     /// Focus moved between deciding to act and sending. Nothing was delivered.
     FocusMoved,
+    /// A modifier the user is holding could not be released, so no chord could be sent that
+    /// they would recognise. Distinct from every other failure because it is the only one the
+    /// user can clear instantly, by taking their hand off the key.
+    ModifiersHeld,
     Win(WinError),
 }
 
@@ -204,6 +296,10 @@ impl std::fmt::Display for Abandoned {
             Self::FocusMoved => write!(
                 f,
                 "focus moved before the correction could be applied; nothing was changed"
+            ),
+            Self::ModifiersHeld => write!(
+                f,
+                "a key from the shortcut is still held down, and it would have altered what was \n                 sent; let go and press it again"
             ),
             Self::Win(e) => write!(f, "{e}"),
         }

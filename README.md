@@ -1,5 +1,7 @@
 # LexiSwitch
 
+![Application Icon](media/icons/windows/main/icon_128.png)
+
 **Fix text you typed under the wrong keyboard layout — and change the case of anything you
 select — without leaving the keyboard.**
 

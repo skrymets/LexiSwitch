@@ -18,7 +18,7 @@ use windows::Win32::Graphics::Gdi::{
     GetDeviceCaps, DFCS_BUTTONCHECK, DFCS_CHECKED, DFC_BUTTON,
     GetMonitorInfoW, GetSysColor, GetTextMetricsW, MonitorFromWindow, ReleaseDC, SelectObject,
     SetTextColor, CLEARTYPE_QUALITY, COLOR_BTNFACE, DEFAULT_CHARSET, DRAW_TEXT_FORMAT,
-    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, FF_DONTCARE,
+    DT_CALCRECT, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE, FF_DONTCARE,
     FONT_CLIP_PRECISION, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, LOGPIXELSY, MONITORINFO,
     MONITOR_DEFAULTTONEAREST, OUT_TT_PRECIS, TEXTMETRICW,
 };
@@ -395,6 +395,34 @@ impl Pen {
         align: DRAW_TEXT_FORMAT,
     ) {
         self.write(hdc, text, x, y, width, colour, align);
+    }
+
+    /// How wide `text` actually is in this font.
+    ///
+    /// Asked of the same function that will draw it, so the two cannot disagree. The character
+    /// count multiplied by an average width is not an answer: `tmAveCharWidth` is an average
+    /// over a proportional font, so a string of narrow characters measures short and one full of
+    /// `<`, `>` and `+` measures long — which is how a checkbox placed after a footer line ended
+    /// up off the edge of the window when the line was reworded.
+    pub fn measure(&self, hdc: HDC, text: &str) -> i32 {
+        if text.is_empty() {
+            return 0;
+        }
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        let mut rect = RECT::default();
+        // SAFETY: `wide` and `rect` live for the whole call. DT_CALCRECT measures without
+        // drawing, and the buffer is only rewritten under DT_MODIFYSTRING, which is not passed.
+        unsafe {
+            let previous = SelectObject(hdc, HGDIOBJ(self.font.0));
+            DrawTextW(
+                hdc,
+                &mut wide,
+                &mut rect,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+            );
+            SelectObject(hdc, previous);
+        }
+        rect.right - rect.left
     }
 
     /// A real checkbox, drawn by Windows.

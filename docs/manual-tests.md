@@ -1294,3 +1294,27 @@ sentence. Everything that ends the transaction now sits on one line.
 
 Verified: 183 unit tests, **61/61 shell checks** (4 of them new regression checks for the empty
 string), 24/24 matrix.
+
+---
+
+## The copy keys get a footer line of their own (2026-08-08)
+
+The history checkbox went off the right edge of both windows the moment the footer strings grew
+`<` and `>` around the key names. Two faults, not one.
+
+Its position was computed from `left.chars().count() * pen.char_width`, and `char_width` is
+`tmAveCharWidth` — an *average* over a proportional font. Estimating a string's width from it is
+wrong by however much the string differs from the font's average, and the error is unbounded.
+`winui::Pen::measure` (`DT_CALCRECT`) now measures, and the checkbox group is anchored to the
+right edge with the prose taking whatever room is left and ellipsising into it.
+
+That alone was not enough. The line it shared grew with content — the chooser names the target
+layout in it, and the case window swaps `<Enter> - apply` for `<Enter> - closes, changing
+nothing` — so the control's room depended on the selected row. Copying now has a line to itself,
+which is fixed-width, and the checkbox cannot be crowded off it by anything.
+
+Adding that line meant four edits, not one: the paint, the height function (`height_for` /
+`wanted_height`), and the separate footer constant the expanded view subtracts to find where the
+scroll indicator goes. Nothing catches a mismatch between them but the eye.
+
+Verified: clippy clean on `--all-targets`, 183 unit tests, 34/34 in the Case and Copy groups.

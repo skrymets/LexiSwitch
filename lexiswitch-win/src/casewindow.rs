@@ -337,13 +337,14 @@ impl CaseWindow<'_> {
                 .sum()
         };
         // Every term matches a step the paint takes, in the same order, so the two cannot
-        // drift: header, selected line, rule, body, then the footer's three fenced bands.
+        // drift: header, selected line, rule, body, then the footer's three fenced bands — the
+        // last of which is two lines, the transaction keys and the copy keys.
         pad + line * 2
             + 6 * scale
             + self.rule_height()
             + body
             + self.rule_height() * 3
-            + line * 5
+            + line * 6
             + 4 * scale
             + pad
     }
@@ -530,9 +531,9 @@ impl CaseWindow<'_> {
         y += self.rule_height();
 
         // --- body --------------------------------------------------------------------
-        // rule, three toggle rows, rule, the navigation line, rule, the action line.
+        // rule, three toggle rows, rule, the navigation line, rule, the action and copy lines.
         let footer_height =
-            self.rule_height() * 3 + self.pen.line_height * 5 + 4 * scale + pad;
+            self.rule_height() * 3 + self.pen.line_height * 6 + 4 * scale + pad;
         let body_bottom = client.bottom - footer_height;
         if self.expanded {
             self.paint_expanded(hdc, pad, y, inner, client, body_bottom, text_colour, dim);
@@ -565,34 +566,53 @@ impl CaseWindow<'_> {
         self.pen.rule(hdc, pad, y, full - pad);
         y += self.rule_height();
 
-        // Everything that ends the transaction, plus copying, on one line. The history choice is
-        // a checkbox rather than a sentence: "H allows clipboard history" and "H keeps it in
-        // clipboard history" were two readings of the same words, and neither said which way it
-        // was currently set.
+        // Everything that ends the transaction on one line, and copying on the next. The history
+        // choice is a checkbox rather than a sentence: "H allows clipboard history" and "H keeps
+        // it in clipboard history" were two readings of the same words, and neither said which
+        // way it was currently set. It gets a line it does not have to share, because sharing one
+        // with a hint whose length depends on the selected row pushed the control off the window.
         let apply = if self.row().changes {
-            "Enter apply"
+            "<Enter> - apply"
         } else {
-            "Enter closes, changing nothing"
+            "<Enter> - closes, changing nothing"
         };
-        let copy = match self.copy_worked {
-            None => "Ctrl+C / Ctrl+Ins copy",
+        self.pen.draw(
+            hdc,
+            &format!("{apply}   \u{2502}   <ESC> - cancel"),
+            pad,
+            y,
+            inner,
+            dim,
+            false,
+        );
+        y += self.pen.line_height;
+        let left = match self.copy_worked {
+            None => "<Ctrl>+C / <Ctrl>+<Ins> - copy",
             Some(true) => "Copied \u{2713}",
             Some(false) => "Copy failed",
         };
-        let left = format!("{apply}   \u{2502}   Esc cancel   \u{2502}   {copy}   \u{2502}   H");
-        self.pen.draw(hdc, &left, pad, y, inner, dim, false);
+        // The history toggle is anchored to the right edge rather than placed after the text.
+        // A control whose position slides with the length of the words beside it is not a
+        // control: reword the line and it walks off the window, which is exactly what happened.
+        // The prose takes whatever room is left and is clipped with an ellipsis if it needs it.
+        let gap = 5 * self.pen.scale;
+        let label = "keep the copy in clipboard history";
+        let label_w = self.pen.measure(hdc, label);
+        let hint_w = self.pen.measure(hdc, "<H>");
+        let box_w = (self.pen.line_height - 8 * self.pen.scale)
+            .clamp(11 * self.pen.scale, 16 * self.pen.scale);
+        let group_x = pad + inner - (hint_w + gap + box_w + gap + label_w);
 
-        // The checkbox and its label follow that text, placed from its measured width so they
-        // cannot land on top of it.
-        let used = (left.chars().count() as i32 + 1) * self.pen.char_width;
-        let box_x = pad + used;
-        let box_w = self.pen.checkbox(hdc, box_x, y, self.expose_copy);
+        self.pen
+            .draw(hdc, left, pad, y, (group_x - pad - gap * 2).max(0), dim, false);
+        self.pen.draw(hdc, "<H>", group_x, y, hint_w, dim, false);
+        let drawn = self.pen.checkbox(hdc, group_x + hint_w + gap, y, self.expose_copy);
         self.pen.draw(
             hdc,
-            "keep the copy in clipboard history",
-            box_x + box_w + 5 * scale,
+            label,
+            group_x + hint_w + gap + drawn + gap,
             y,
-            (inner - used - box_w).max(0),
+            label_w,
             dim,
             false,
         );

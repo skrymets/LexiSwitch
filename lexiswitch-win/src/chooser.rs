@@ -512,7 +512,7 @@ impl Chooser<'_> {
         self.pen.draw(
             hdc,
             &format!(
-                "\u{2191}\u{2193} {}   \u{2502}   Enter apply   \u{2502}   Space {}   \u{2502}   Esc cancel",
+                "\u{2191}\u{2193} {}   \u{2502}   <Enter> - apply   \u{2502}   <Space> - {}   \u{2502}   <ESC> - cancel",
                 if self.expanded { "scroll" } else { "choose" },
                 if self.expanded { "collapse" } else { "expand" }
             ),
@@ -525,24 +525,46 @@ impl Chooser<'_> {
         y += self.pen.line_height;
         // Task 3.7: the layout a switching commit would activate is named before the user
         // commits, not discovered afterwards.
-        let copy = match self.copy_worked {
-            None => "Ctrl+C / Ctrl+Ins copy",
+        self.pen.draw(
+            hdc,
+            &format!("<Ctrl>+<Enter> - apply and switch typing to {target}"),
+            pad,
+            y,
+            inner,
+            dim,
+            false,
+        );
+        y += self.pen.line_height;
+        // Copying gets a line of its own. Sharing one with the commit hint left the checkbox
+        // competing with a sentence that grows with the layout's name, and the loser was the
+        // control rather than the prose.
+        let left = match self.copy_worked {
+            None => "<Ctrl>+C / <Ctrl>+<Ins> - copy",
             Some(true) => "Copied \u{2713}",
             Some(false) => "Copy failed",
         };
-        let left = format!(
-            "Ctrl+Enter apply and switch typing to {target}   \u{2502}   {copy}   \u{2502}   H"
-        );
-        self.pen.draw(hdc, &left, pad, y, inner, dim, false);
-        let used = (left.chars().count() as i32 + 1) * self.pen.char_width;
-        let box_x = pad + used;
-        let box_w = self.pen.checkbox(hdc, box_x, y, self.expose_copy);
+        // The history toggle is anchored to the right edge rather than placed after the text.
+        // A control whose position slides with the length of the words beside it is not a
+        // control: reword the line and it walks off the window, which is exactly what happened.
+        // The prose takes whatever room is left and is clipped with an ellipsis if it needs it.
+        let gap = 5 * self.pen.scale;
+        let label = "keep the copy in clipboard history";
+        let label_w = self.pen.measure(hdc, label);
+        let hint_w = self.pen.measure(hdc, "<H>");
+        let box_w = (self.pen.line_height - 8 * self.pen.scale)
+            .clamp(11 * self.pen.scale, 16 * self.pen.scale);
+        let group_x = pad + inner - (hint_w + gap + box_w + gap + label_w);
+
+        self.pen
+            .draw(hdc, left, pad, y, (group_x - pad - gap * 2).max(0), dim, false);
+        self.pen.draw(hdc, "<H>", group_x, y, hint_w, dim, false);
+        let drawn = self.pen.checkbox(hdc, group_x + hint_w + gap, y, self.expose_copy);
         self.pen.draw(
             hdc,
-            "keep the copy in clipboard history",
-            box_x + box_w + 5 * self.pen.scale,
+            label,
+            group_x + hint_w + gap + drawn + gap,
             y,
-            (inner - used - box_w).max(0),
+            label_w,
             dim,
             false,
         );
@@ -680,11 +702,11 @@ impl Chooser<'_> {
     ) -> i32 {
         let scale = self.pen.scale;
         let candidate = &self.candidates[self.selected];
-        // Where the body has to stop: the footer's two lines, its rule, and the padding under
+        // Where the body has to stop: the footer's three lines, its rule, and the padding under
         // it, plus one line kept back for the scroll position. That line is reserved whether or
         // not there is anything to scroll, so the text does not shift under the reader the
         // moment the indicator appears.
-        let footer = self.pen.line_height * 2 + 8 * scale + 1.max(scale) + 14 * scale;
+        let footer = self.pen.line_height * 3 + 8 * scale + 1.max(scale) + 14 * scale;
         let indicator_y = client.bottom - footer - self.pen.line_height;
         let bottom = indicator_y;
 

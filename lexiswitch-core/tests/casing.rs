@@ -508,3 +508,89 @@ fn the_groups_partition_the_styles() {
     }
     assert_eq!(seen, Style::ALL.to_vec(), "the groups are not the list, in order");
 }
+
+// --- identifier styles across lines --------------------------------------------------
+//
+// An identifier style supplies its own delimiter, so it discards the separators it found. That
+// is right for spaces and for `_`, `-`, `.` — and was wrong for line breaks, which it also
+// discarded, fusing a four-line list into one enormous identifier. `Lines: Keep` says keep, and
+// a multi-line selection is a list of lines: the style belongs to each line, not to the whole.
+
+/// The reported defect. With the line options unset, a break survives and the style is applied
+/// within each line rather than across all of them.
+#[test]
+fn identifier_styles_keep_line_breaks_by_default() {
+    let text = "cs key sent\ncs key received";
+    assert_eq!(
+        render(text, Style::Snake, &plain()),
+        "cs_key_sent\ncs_key_received"
+    );
+    assert_eq!(
+        render(text, Style::Camel, &plain()),
+        "csKeySent\ncsKeyReceived"
+    );
+    assert_eq!(
+        render(text, Style::Dot, &plain()),
+        "cs.key.sent\ncs.key.received"
+    );
+}
+
+/// Each line starts a new identifier, so `camelCase` lowercases the head of every line rather
+/// than only the first in the selection.
+#[test]
+fn each_line_is_its_own_identifier() {
+    assert_eq!(render("One two\nThree four", Style::Camel, &plain()), "oneTwo\nthreeFour");
+}
+
+/// A Windows line ending survives as it was written.
+#[test]
+fn a_carriage_return_pair_survives_an_identifier_style() {
+    assert_eq!(render("a b\r\nc d", Style::Snake, &plain()), "a_b\r\nc_d");
+}
+
+/// Joining the lines is exactly what the line option is for, and now it is the *only* way to
+/// get the fused result — which used to be the unavoidable one.
+#[test]
+fn joining_lines_fuses_an_identifier() {
+    let joined = Strips {
+        lines: Lines::Join,
+        ..plain()
+    };
+    let removed = Strips {
+        lines: Lines::Remove,
+        ..plain()
+    };
+    assert_eq!(
+        render("cs key sent\ncs key received", Style::Snake, &joined),
+        "cs_key_sent_cs_key_received"
+    );
+    assert_eq!(
+        render("cs key sent\ncs key received", Style::Snake, &removed),
+        "cs_key_sent_cs_key_received"
+    );
+}
+
+/// Because the line options now reach identifier styles, they must stop reporting no effect on
+/// multi-line text — the dim rule and the behaviour are the same predicate, so this cannot drift.
+#[test]
+fn the_line_options_affect_identifier_styles_across_lines() {
+    let text = "cs key sent\ncs key received";
+    assert!(toggle_affects(text, Style::Snake, &plain(), Toggle::JoinLines));
+    assert!(toggle_affects(text, Style::Snake, &plain(), Toggle::RemoveLines));
+    // On one line there is nothing for them to do, and they still say so.
+    assert!(!toggle_affects("cs key sent", Style::Snake, &plain(), Toggle::JoinLines));
+}
+
+/// Leading and trailing whitespace around a line is still the style's to discard; only the
+/// break itself survives.
+#[test]
+fn an_identifier_line_is_trimmed_but_the_break_is_not() {
+    assert_eq!(render("  a b  \n  c d  ", Style::Snake, &plain()), "a_b\nc_d");
+}
+
+/// A blank line is a break with nothing between it and the next; it must not become a stray
+/// delimiter.
+#[test]
+fn a_blank_line_does_not_become_a_delimiter() {
+    assert_eq!(render("a b\n\nc d", Style::Snake, &plain()), "a_b\n\nc_d");
+}

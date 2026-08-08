@@ -334,9 +334,13 @@ pub fn render(text: &str, style: Style, strips: &Strips) -> String {
     // the options composable and keeps "what did that do?" answerable.
     let mut separators: Vec<String> = vec![resolve(&tokens.leading, strips, style)];
     let mut words: Vec<String> = Vec::new();
+    // Kept alongside the resolved ones because an identifier style discards separator *text*
+    // but must still see where the line breaks were.
+    let mut raw: Vec<String> = vec![tokens.leading.clone()];
     for (word, following) in tokens.words {
         words.push(strip_word(&word, strips, style));
         separators.push(resolve(&following, strips, style));
+        raw.push(following);
     }
 
     // Positions are counted over the words that still have something in them, so a word emptied
@@ -356,15 +360,39 @@ pub fn render(text: &str, style: Style, strips: &Strips) -> String {
         .collect();
 
     if style.is_identifier() {
-        // The style supplies the delimiter, so the original separators — leading and trailing
-        // included — play no part. Emptied words are dropped rather than joined, or the
-        // delimiter would double around the gap they left.
-        return cased
-            .iter()
-            .filter(|w| !w.is_empty())
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(style.delimiter());
+        // The style supplies the delimiter, so the separators it found play no part — with one
+        // exception that was originally missed. A **line break** is not a word separator like a
+        // space: it separates *identifiers*. Discarding it fused a four-line list into one
+        // enormous name, and did so even with both line options unset, which made `Lines: Keep`
+        // a setting that did not keep anything.
+        //
+        // So a multi-line selection is a list of lines, each one its own identifier. Joining or
+        // removing the breaks is still available, and is now the only way to get the fused
+        // result rather than the unavoidable one. Whitespace around each line is still the
+        // style's to discard; only the break itself survives, exactly as written, so a Windows
+        // file keeps its `\r\n`.
+        let keep_lines = strips.lines == Lines::Keep;
+        let mut out = String::with_capacity(text.len());
+        let mut line: Vec<String> = Vec::new();
+        // Counted within the line, not across the selection. Each line is a separate identifier,
+        // so each one has its own first word — otherwise `camelCase` lowercases the head of the
+        // first line and capitalises every line after it, which is not a name anybody writes.
+        let mut position = 0;
+        for (i, word) in words.iter().enumerate() {
+            if !word.is_empty() {
+                line.push(case_word(word, style, position));
+                position += 1;
+            }
+            let Some(after) = raw.get(i + 1) else { continue };
+            if keep_lines && after.chars().any(is_break) {
+                out.push_str(&line.join(style.delimiter()));
+                out.push_str(&breaks_only(after));
+                line.clear();
+                position = 0;
+            }
+        }
+        out.push_str(&line.join(style.delimiter()));
+        return out;
     }
 
     let mut out = String::with_capacity(text.len());
@@ -433,6 +461,16 @@ fn is_separator(c: char) -> bool {
 
 fn is_break(c: char) -> bool {
     c == '\n' || c == '\r'
+}
+
+/// Just the line-break characters of a separator, in the order they appeared.
+///
+/// Used by the identifier styles, which keep the break and discard the spaces around it. Taking
+/// the characters rather than substituting a newline is what preserves a `\r\n` as a `\r\n`:
+/// rewriting one file's line endings because its text was re-cased would be a change nobody
+/// asked for and a whole-file diff to whoever reviews it next.
+fn breaks_only(separator: &str) -> String {
+    separator.chars().filter(|c| is_break(*c)).collect()
 }
 
 /// Split into words and separators.

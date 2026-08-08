@@ -32,7 +32,8 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, GetSysColor,
     IntersectClipRect, InvalidateRect, RestoreDC, SaveDC, SelectObject, SetBkMode, SetTextColor,
-    COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT,
+    COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
+    COLOR_WINDOWTEXT,
     DT_CALCRECT, DT_NOPREFIX, DT_WORDBREAK, HDC, HGDIOBJ, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -543,6 +544,39 @@ impl CaseWindow<'_> {
         }
         self.top = self.top.min(self.lines.len().saturating_sub(room));
 
+        // Say so when the list does not all fit. Without this the only evidence that there is
+        // more below is that pressing Down eventually reveals it, which is a thing to discover
+        // rather than a thing to see — and at a large display scale, where the window is clamped
+        // to the work area, not fitting is the normal case rather than the odd one.
+        let hidden = self.lines.len() > room;
+        if hidden {
+            let scale = self.pen.scale;
+            let track = RECT {
+                left: full - pad + 2 * scale,
+                top,
+                right: full - pad + 5 * scale,
+                bottom,
+            };
+            let span = (bottom - top).max(1);
+            let visible = (span * room as i32 / self.lines.len() as i32).max(8 * scale);
+            let offset = (span - visible) * self.top as i32
+                / (self.lines.len() - room).max(1) as i32;
+            let thumb = RECT {
+                top: top + offset,
+                bottom: top + offset + visible,
+                ..track
+            };
+            // SAFETY: `hdc` is valid for this paint and both brushes are deleted immediately.
+            unsafe {
+                let back = CreateSolidBrush(COLORREF(GetSysColor(COLOR_BTNFACE)));
+                FillRect(hdc, &track, back);
+                let _ = DeleteObject(HGDIOBJ(back.0));
+                let front = CreateSolidBrush(COLORREF(GetSysColor(COLOR_GRAYTEXT)));
+                FillRect(hdc, &thumb, front);
+                let _ = DeleteObject(HGDIOBJ(front.0));
+            }
+        }
+
         let mut y = top;
         for line in self.lines.iter().skip(self.top) {
             match line {
@@ -832,7 +866,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 // SAFETY: invalidating the whole client area of a window that is alive for the
                 // duration of this call.
                 unsafe {
-                    let _ = InvalidateRect(Some(hwnd), None, true);
+                // `false`: do not let Windows erase the background first. Every paint here
+                // fills the whole client area before drawing anything, so the erase adds a
+                // frame of blank window and nothing else — which is the flicker seen while
+                // scrolling, where repaints come in quick succession.
+                    let _ = InvalidateRect(Some(hwnd), None, false);
                 }
             }
             LRESULT(0)

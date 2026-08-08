@@ -373,7 +373,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             if state.key(wp.0) {
                 // SAFETY: invalidating a window that is alive for this call.
                 unsafe {
-                    let _ = InvalidateRect(Some(hwnd), None, true);
+                // `false`: do not let Windows erase the background first. Every paint here
+                // fills the whole client area before drawing anything, so the erase adds a
+                // frame of blank window and nothing else — which is the flicker seen while
+                // scrolling, where repaints come in quick succession.
+                    let _ = InvalidateRect(Some(hwnd), None, false);
                 }
             }
             LRESULT(0)

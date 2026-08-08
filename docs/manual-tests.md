@@ -1123,3 +1123,61 @@ down continuously through the transaction. The remedy is the one the code now ta
 the user to let go, and say so plainly if they do not.
 
 Verified no regression: 47/47 shell checks, 24/24 matrix, 175 unit tests.
+
+## Manual group D, and the forced joins it found (2026-08-08)
+
+Ten rendering items, run by hand against the release build. Seven confirmed as written. The
+other three, and one bug the checklist did not think to ask about.
+
+### Identifier styles were fusing every line into one name
+
+Reported from a four-line selection:
+
+```
+cs key sent
+cs key received
+cs key blocked
+cs key notified
+```
+
+Every identifier style — `snake_case`, `camelCase`, `dot.case`, all eight — returned a single
+run with no line breaks at all: `cs_key_sent_cs_key_received_cs_key_blocked_cs_key_notified`.
+The prose styles preserved the lines correctly. **Both line options were unset.**
+
+This was my design, and it was wrong. Identifier styles discarded every separator they found on
+the grounds that the style supplies its own delimiter — true for a space, for `_`, `-` and `.`,
+and false for a line break, which does not separate *words* but *identifiers*. Discarding it
+made `Lines: Keep` a setting that kept nothing, and made the fused result unavoidable rather
+than a choice.
+
+**Fixed.** A multi-line selection is a list of lines, each one its own identifier. The break
+survives exactly as written, so a Windows file keeps its `\r\n`. Whitespace around each line is
+still the style's to discard. Joining or removing the breaks is still available and is now the
+only way to get the fused result. Word position resets per line, so `camelCase` lowercases the
+head of *every* line rather than only the first — without that, `One two\nThree four` came back
+as `oneTwo\nThreeFour`.
+
+The line options consequently stop reporting "no effect" on multi-line text, which the dim rule
+gets for free: it and the behaviour are the same predicate.
+
+### D7 — the window blinked while scrolling
+
+`InvalidateRect` was asking Windows to erase the background first. Every paint here fills the
+whole client area before drawing, so the erase contributed one frame of blank window and
+nothing else — invisible at one repaint, a flicker at scrolling speed. Now `false` in all three
+windows, the chooser and the recorder included, which had it too.
+
+### D9 — the list scrolled with nothing to say so
+
+At 150% the window is clamped to the work area and the list scrolls, but the only evidence was
+that pressing Down eventually revealed more. A proportional indicator is now drawn in the right
+margin when the list does not fit.
+
+### D5 — not a bug
+
+Toggles 3 and 4 are dim for `snake_case` and still respond to the keys. That is correct: dim
+means "would not change *this* style's result", not "disabled". The options are global, so a
+user who happens to have an identifier style selected must still be able to set one — and the
+box showing `[x]` is the truth about the setting.
+
+Verified after the fixes: 182 unit tests, 47/47 shell checks, 24/24 matrix.

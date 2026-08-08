@@ -402,11 +402,11 @@ rather than in the path being retired.
 and none of them made a right-click work. `examples/probe_tray.rs` settled it by registering
 three icons at once and logging every callback the shell delivered to each.
 
-| Icon | Window | Protocol | Tooltip | Right-click delivered |
-|---|---|---|---|---|
-| A | message-only | legacy | yes | 3 × `WM_RBUTTONUP` |
-| B | top-level | legacy | yes | 2 × `WM_RBUTTONUP` |
-| C | top-level | version 4 | **no** | 3 × `WM_CONTEXTMENU` |
+| Icon | Window       | Protocol  | Tooltip | Right-click delivered |
+|------|--------------|-----------|---------|-----------------------|
+| A    | message-only | legacy    | yes     | 3 × `WM_RBUTTONUP`    |
+| B    | top-level    | legacy    | yes     | 2 × `WM_RBUTTONUP`    |
+| C    | top-level    | version 4 | **no**  | 3 × `WM_CONTEXTMENU`  |
 
 758 callbacks in total. Two things follow, and both contradict what had been assumed.
 
@@ -473,10 +473,10 @@ runs, and is not quarantined. Working set 13.8 MB.
 Set against the pre-removal baseline recorded below, this is a null result, and it is worth
 being precise about why rather than reporting it as a pass:
 
-| | Runs? | Quarantined? |
-|---|---|---|
-| Before removal (2026-08-07) | yes | no |
-| After removal (2026-08-07) | yes | no |
+|                             | Runs? | Quarantined? |
+|-----------------------------|-------|--------------|
+| Before removal (2026-08-07) | yes   | no           |
+| After removal (2026-08-07)  | yes   | no           |
 
 **Nothing was fixed, because nothing was broken at the time of measurement.** The pivot brief
 §22 lists "the release build is not blocked because of typing-monitor behaviour" as a
@@ -542,11 +542,11 @@ all, so correction silently does nothing there. Accepted limitation, noted in AD
 every five minutes for an hour. The later chooser-activation fix (`a98911c`) touches only the
 window's handling of `WM_ACTIVATE` and nothing on the idle path.
 
-| | working set | private working set | handles |
-|---|---|---|---|
-| idle, before any conversion (15 min) | 13.6 → 13.7 MB | 1.8 → 1.7 MB | 182 |
-| peak, just after the first conversion | 22.2 MB | 2.9 MB | 300 → 286 |
-| end of the hour (45 min later) | 21.1 MB | 1.7 MB | 287 |
+|                                       | working set    | private working set | handles   |
+|---------------------------------------|----------------|---------------------|-----------|
+| idle, before any conversion (15 min)  | 13.6 → 13.7 MB | 1.8 → 1.7 MB        | 182       |
+| peak, just after the first conversion | 22.2 MB        | 2.9 MB              | 300 → 286 |
+| end of the hour (45 min later)        | 21.1 MB        | 1.7 MB              | 287       |
 
 **No leak.** Across the 45 minutes following a conversion every figure drifts *down* — working
 set 22.2 → 21.1 MB, private 2.9 → 1.7 MB, back to where it started before any conversion ran —
@@ -578,10 +578,10 @@ already recorded above — the binary links no networking library at all.
 Measured with `cargo run -p lexiswitch-win --example probe_langswitch -- <layout>`, which asks
 for a named layout and then reads back what the foreground window's language actually is:
 
-| layout | HKL as reported | switch honoured |
-|---|---|---|
-| `en-US` | `0x00000000_04090409` | yes, within 100 ms |
-| `de-DE` | `0x00000000_04070407` | yes, within 100 ms |
+| layout  | HKL as reported       | switch honoured          |
+|---------|-----------------------|--------------------------|
+| `en-US` | `0x00000000_04090409` | yes, within 100 ms       |
+| `de-DE` | `0x00000000_04070407` | yes, within 100 ms       |
 | `uk-UA` | `0xFFFFFFFF_F0A80422` | **no, ignored entirely** |
 
 A layout that is not the default for its language gets a handle whose high word is a device
@@ -611,10 +611,10 @@ milliseconds later when `Ctrl+C` goes out. The target receives `Ctrl+Shift+C`.
 
 Isolated to that single keystroke, same selection, same document:
 
-| sent to Notepad++ | copied | document |
-|---|---|---|
-| `Ctrl+C` | the selection | intact |
-| `Ctrl+C` with `Shift` held | nothing | **emptied** |
+| sent to Notepad++          | copied        | document    |
+|----------------------------|---------------|-------------|
+| `Ctrl+C`                   | the selection | intact      |
+| `Ctrl+C` with `Shift` held | nothing       | **emptied** |
 
 Notepad tolerates the same chord, which is exactly why this took three sittings to find: every
 reproduction attempt in Notepad passed, and Notepad++ was reached only through the real hotkey,
@@ -689,10 +689,10 @@ The clipboard offers a partial answer. Pasting requires reading the clipboard, s
 never opened it cannot have pasted from it. That signal is sound here — measured with
 `probe_clipboard_consumer`, which writes the clipboard and sends no paste at all:
 
-| clipboard written | consumer seen within 2 s |
-|---|---|
-| plain text | no |
-| with the history-exclusion formats set | no |
+| clipboard written                      | consumer seen within 2 s |
+|----------------------------------------|--------------------------|
+| plain text                             | no                       |
+| with the history-exclusion formats set | no                       |
 
 So nothing on this machine reads the clipboard opportunistically, and a consumer observed after
 a paste chord really is the target. Clipboard History, cloud clipboard and third-party managers
@@ -731,9 +731,9 @@ The replacement puts text on the clipboard, sends `Ctrl+V`, waits for the target
 then restores what was there before. The order of the settle and the wait was got wrong in both
 directions before it was got right, and each mistake produced a different failure:
 
-| order | what breaks |
-|---|---|
-| settle, then wait | a target reading inside the settle is never observed — used as evidence, this reported a *working* Notepad conversion as "not applied" |
+| order             | what breaks                                                                                                                                                                                                                            |
+|-------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| settle, then wait | a target reading inside the settle is never observed — used as evidence, this reported a *working* Notepad conversion as "not applied"                                                                                                 |
 | wait, then settle | Chrome watches the clipboard and opens it the instant anything is written, so the wait returns on that observation, the restore runs, and the paste reads the restored value — the field ends up holding the user's previous clipboard |
 
 Both were measured, the second twice: it was introduced to fix the first, and put `PRIOR-CLIPBOARD`
@@ -773,14 +773,14 @@ Against the release build unless noted. The agent's own log is quoted because it
 channel that reports outcomes reliably — balloons have been observed not displaying at all on
 this machine.
 
-| what | result |
-|---|---|
+| what                                                  | result                                                                                                                                                        |
+|-------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Startup with the shortcut held by another application | Keeps running. `hotkey_conflict: … Hot key is already registered.` Tray icon present and receiving shell messages. Previously exited with code 1 and no icon. |
-| Convert from the tray while the shortcut is held | Works. `selection_requested` then `outcome_applied`; document converted. |
-| Record a replacement shortcut | Works. `shortcut_changed`, written to the configuration file, `config_reloaded`, then converted with the new combination. No restart. |
-| Conflict clears when the shortcut is released | Works. Holder stopped, tray touched, `hotkey_conflict_cleared`, then converted on the recovered shortcut. |
-| Configuration reload applying a valid change | Works, as part of the recording flow above. |
-| Release build, not only debug | The compatibility matrix runs against the release binary. |
+| Convert from the tray while the shortcut is held      | Works. `selection_requested` then `outcome_applied`; document converted.                                                                                      |
+| Record a replacement shortcut                         | Works. `shortcut_changed`, written to the configuration file, `config_reloaded`, then converted with the new combination. No restart.                         |
+| Conflict clears when the shortcut is released         | Works. Holder stopped, tray touched, `hotkey_conflict_cleared`, then converted on the recovered shortcut.                                                     |
+| Configuration reload applying a valid change          | Works, as part of the recording flow above.                                                                                                                   |
+| Release build, not only debug                         | The compatibility matrix runs against the release binary.                                                                                                     |
 
 **Not executed, and why.** Starting with one keyboard layout installed, and becoming usable when
 a second appears, would both mean changing the user's Windows keyboard configuration. The logic
@@ -1070,11 +1070,11 @@ the keys are pressed Win-then-Alt, and works Alt-then-Win. Order never matters i
 
 **Any held modifier stops the copy.** In Notepad++, against the same selection, four trials each:
 
-| sent | result |
-|---|---|
-| `Ctrl+C` | copied, 4/4 |
-| `Ctrl+C` with `Alt` held | **nothing, 4/4** |
-| `Ctrl+C` with `Win` held | **nothing, 4/4** |
+| sent                       | result           |
+|----------------------------|------------------|
+| `Ctrl+C`                   | copied, 4/4      |
+| `Ctrl+C` with `Alt` held   | **nothing, 4/4** |
+| `Ctrl+C` with `Win` held   | **nothing, 4/4** |
 | `Ctrl+C` with `Shift` held | **nothing, 4/4** |
 
 So this is not about `Alt` specifically, and `release_held_modifiers` is entirely load-bearing.
@@ -1088,10 +1088,10 @@ whole Notepad/Notepad++ asymmetry, and it is structural rather than a difference
 released once, slept 30 ms, and sent the chord: one repeat period. Simulating auto-repeat
 reproduces the failure reliably, which nothing else had:
 
-| held with simulated repeat | before | after |
-|---|---|---|
-| 300 ms | 3/4 opened | 4/5 opened |
-| 1400 ms | **1/4 opened** | 3/5 opened |
+| held with simulated repeat | before         | after      |
+|----------------------------|----------------|------------|
+| 300 ms                     | 3/4 opened     | 4/5 opened |
+| 1400 ms                    | **1/4 opened** | 3/5 opened |
 
 ### What was wrong in my own first diagnosis
 
@@ -1318,3 +1318,51 @@ Adding that line meant four edits, not one: the paint, the height function (`hei
 scroll indicator goes. Nothing catches a mismatch between them but the eye.
 
 Verified: clippy clean on `--all-targets`, 183 unit tests, 34/34 in the Case and Copy groups.
+
+---
+
+## The application gets its own icons (2026-08-08)
+
+Until now the program borrowed the shell's: `IDI_APPLICATION` in the tray, and whatever
+Explorer shows an executable with no icon resource. Three drawn icons replaced them —
+`media/lexiswitch_main.ico`, `lexiswitch_error.ico`, `lexiswitch_disabled.ico`, each with seven
+frames from 16 to 256 pixels.
+
+### Embedding without a resource compiler
+
+`lexiswitch/build.rs` writes the `.res` itself and hands it to the linker with
+`cargo:rustc-link-arg-bins`. `rc.exe` ships with the Windows SDK and `llvm-rc` with some LLVM
+installations, so calling either would make a build that otherwise needs nothing but cargo fail
+on a machine that has neither; the crates that paper over that trade one hard dependency for a
+tree of soft ones, against a dependency budget this project keeps deliberately small. The RES
+format is a 32-byte header and a length, and the icon's own frames are copied through untouched
+— PNG-compressed 256px frame included, which is what `RT_ICON` holds anyway.
+
+Verified by reading the resources back out of the built executable rather than by looking at it:
+`EnumResourceNames` reports 21 `RT_ICON` (3 × 7 frames) and `RT_GROUP_ICON` 1, 2, 3;
+`LoadImage` resolves every group at every declared size including the 256px PNG; and the pixels
+at seven sampled points match the source `.ico` for each of the three. Group 1 is the main icon
+because the shell shows the numerically lowest group and nothing else.
+
+### Why `LR_SHARED` is not used
+
+It caches by resource name and ignores the size requested, so the first load would silently fix
+the size of every later one — the tray would get whatever the window class asked for first, or
+the reverse. `icon.rs` loads each kind and size once into a `OnceLock` instead and never
+destroys them: six handles at most, each made once, all still in use when the process ends.
+
+### The balloon
+
+Notifications showed the shell's generic application icon, which named no program at all.
+`NIIF_USER` with `hBalloonIcon` set makes the shell use ours; `NIIF_LARGE_ICON` makes it ask at
+notification size rather than tray size. The `Tray` remembers which of the three it is currently
+showing so a balloon carries the same one — a notification saying something went wrong should
+not arrive under the icon for everything being fine.
+
+The system glyphs are still in `load_icon`, as a fallback and only as one: the `examples/`
+probes link the tray code without a build script, so they have no icon resources, and the
+three-way mapping is preserved there so a probe still shows the state it is in.
+
+Verified: clippy clean on `--all-targets`, 183 unit tests, **61/61 shell checks**, 6/6 matrix
+against Notepad (the full matrix was not run — this change touches no commit path). Release
+binary 1.09 MB of the 5 MB budget, up 356 KB, which is the three icon files.

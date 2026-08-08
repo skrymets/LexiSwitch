@@ -122,6 +122,13 @@ impl MessageWindow {
                 lpfnWndProc: Some(wndproc),
                 hInstance: hinstance.into(),
                 lpszClassName: CLASS_NAME,
+                // This window is never shown, so the icon is never drawn from here. It is set
+                // anyway because a top-level class with no icon is what makes a window report
+                // the generic one to anything that asks — Alt-Tab, the window menu, and every
+                // shell utility that enumerates windows — and "never shown" is a property of
+                // today's code rather than of the class.
+                hIcon: crate::icon::app_icon(crate::icon::Kind::Main, crate::icon::Size::Large)
+                    .unwrap_or_default(),
                 ..Default::default()
             };
             // A zero return can mean "already registered", which is fine; CreateWindowExW

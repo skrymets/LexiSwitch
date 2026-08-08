@@ -8,11 +8,13 @@
 //! that window is an ordinary hidden top-level one rather than message-only — see
 //! [`crate::window`].
 
+use std::cell::Cell;
+
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW, NOTIFYICONDATAW_0, NOTIFY_ICON_INFOTIP_FLAGS,
+    Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_LARGE_ICON, NIIF_NONE,
+    NIIF_USER, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, NOTIFYICONDATAW_0,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, LoadIconW, PostMessageW,
@@ -22,22 +24,40 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use lexiswitch_core::state::AgentState;
 
+use crate::icon;
 use crate::WinError;
 
-/// The icon for a state.
+/// Which of the three icons a state shows.
 ///
 /// Three icons, not five. A condition the user must act on is worth distinguishing from one
 /// they chose, and from everything working; which particular condition it is belongs in the
 /// tooltip, where there is room to say it.
-fn load_icon(state: &AgentState) -> Result<HICON, WinError> {
-    let which = if state.needs_attention() {
-        IDI_WARNING
+fn icon_for(state: &AgentState) -> icon::Kind {
+    if state.needs_attention() {
+        icon::Kind::Error
     } else if state.converts() {
-        IDI_APPLICATION
+        icon::Kind::Main
     } else {
-        IDI_HAND
+        icon::Kind::Disabled
+    }
+}
+
+/// The icon for a state, at tray size.
+///
+/// The system glyphs are still here as a fallback and only as one. They are what a binary with
+/// no icon resources gets — the `examples/` probes link the tray code without a build script —
+/// and the mapping is the same three-way one, so a probe still shows the state it is in.
+fn load_icon(state: &AgentState) -> Result<HICON, WinError> {
+    let kind = icon_for(state);
+    if let Some(icon) = icon::app_icon(kind, icon::Size::Small) {
+        return Ok(icon);
+    }
+    let which = match kind {
+        icon::Kind::Error => IDI_WARNING,
+        icon::Kind::Main => IDI_APPLICATION,
+        icon::Kind::Disabled => IDI_HAND,
     };
-    // SAFETY: both are built-in resource identifiers, so no module handle is needed.
+    // SAFETY: all three are built-in resource identifiers, so no module handle is needed.
     unsafe { LoadIconW(None, which) }.map_err(|e| WinError::new("LoadIconW", e))
 }
 
@@ -70,6 +90,10 @@ const ICON_ID: u32 = 1;
 /// A tray icon, removed when dropped.
 pub struct Tray {
     hwnd: HWND,
+    /// Which icon is currently showing, so a balloon can carry the same one. The shell does not
+    /// answer that question and `notify` takes `&self`, which is what the cell is for; this
+    /// type lives on the message-loop thread and is never shared.
+    kind: Cell<icon::Kind>,
 }
 
 /// Menu command identifiers, posted back as `WM_COMMAND`.
@@ -122,14 +146,17 @@ impl Tray {
                 .ok()
                 .map_err(|e| WinError::new("Shell_NotifyIconW(NIM_ADD)", e))?;
         }
-        Ok(Self { hwnd })
+        Ok(Self {
+            hwnd,
+            kind: Cell::new(icon_for(state)),
+        })
     }
 
     /// Switch between the enabled and disabled appearances.
     ///
-    /// Disabled uses the system's "no entry" icon rather than a dimmed variant of the enabled
-    /// one: a tray icon is 16 pixels, and whether the hotkey will do anything should be
-    /// readable at a glance rather than by comparison.
+    /// Each state has its own drawn icon rather than a filter applied to one: a tray icon is
+    /// sixteen pixels, and whether the shortcut will do anything should be readable at a glance
+    /// rather than by comparison against an icon that is not on screen beside it.
     ///
     /// This used to mean paused *recording*. Nothing is recorded now, so it means only that
     /// the hotkey does not convert — a distinction the tooltip has to make, because a user
@@ -137,6 +164,7 @@ impl Tray {
     /// watching", which was never something they had to turn off.
     pub fn set_state(&self, state: &AgentState) {
         let Ok(icon) = load_icon(state) else { return };
+        self.kind.set(icon_for(state));
         let mut data = Self::base(self.hwnd);
         // NIF_MESSAGE on every modify, or this call silently unhooks the icon.
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -252,7 +280,21 @@ impl Tray {
         let mut data = Self::base(self.hwnd);
         // NIF_MESSAGE on every modify, or this call silently unhooks the icon.
         data.uFlags = NIF_INFO | NIF_MESSAGE;
-        data.dwInfoFlags = NOTIFY_ICON_INFOTIP_FLAGS(0);
+        // The balloon shows the same icon the tray is showing, which is the point of keeping
+        // `kind`: a notification saying something went wrong should not arrive under the icon
+        // for everything being fine. Without NIIF_USER the shell picks its own generic
+        // application icon, which is what was there before and named no program at all.
+        //
+        // `hBalloonIcon` is a separate field from `hIcon` and only NIIF_USER makes the shell
+        // read it. NIIF_LARGE_ICON asks for it at notification size rather than tray size,
+        // which is why the handle is the large one.
+        match icon::app_icon(self.kind.get(), icon::Size::Large) {
+            Some(icon) => {
+                data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+                data.hBalloonIcon = icon;
+            }
+            None => data.dwInfoFlags = NIIF_NONE,
+        }
         write_wide(&mut data.szInfoTitle, title);
         write_wide(&mut data.szInfo, body);
 

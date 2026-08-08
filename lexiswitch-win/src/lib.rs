@@ -31,6 +31,7 @@ pub mod chooser;
 pub mod clipboard;
 pub mod focus;
 pub mod hotkey;
+pub mod icon;
 pub mod inject;
 pub mod instance;
 pub mod langswitch;

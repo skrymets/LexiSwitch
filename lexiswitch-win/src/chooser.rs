@@ -156,6 +156,8 @@ pub fn show(
         hInstance: hinstance.into(),
         lpszClassName: CLASS_NAME,
         hCursor: cursor,
+        hIcon: crate::icon::app_icon(crate::icon::Kind::Main, crate::icon::Size::Large)
+            .unwrap_or_default(),
         ..Default::default()
     };
     // SAFETY: `class` is fully initialised and its name outlives the call; re-registration

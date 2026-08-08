@@ -1,5 +1,9 @@
 /target
 /spikes/**/target
+
+# Where .github/workflows/release.yml stages and zips the release archive. It only ever
+# exists on a runner, but a local run of those steps should not leave a committable binary.
+/dist
 **/*.rs.bk
 *.pdb
 

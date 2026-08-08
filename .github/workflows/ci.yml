@@ -1,0 +1,84 @@
+name: CI
+
+# Every gate the release runs, run early, so tagging is a formality rather than a gamble.
+# The one thing this does not do is enforce the 5 MB budget — that belongs on the tag, where
+# a failure costs a re-tag rather than a blocked branch. The size is reported here anyway.
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+# Nothing here publishes anything.
+permissions:
+  contents: read
+
+# A second push to the same branch or PR makes the first run's answer irrelevant before it
+# has finished producing it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    # Not ubuntu. `lexiswitch-win` is Win32 FFI top to bottom and `cargo test --workspace`
+    # builds it, so a Linux runner cannot compile this workspace at all.
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup component add clippy
+          rustc --version
+
+      # Third-party actions are on major-version tags rather than commit SHAs. That is a known
+      # gap, not an oversight — see DEV.md, "Pinning the third-party actions".
+      - uses: Swatinem/rust-cache@v2
+
+      # Prebuilt binaries. `cargo install` compiles both from source and costs minutes on
+      # every push.
+      - name: Install cargo-deny and cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Online, deliberately. Locally these two must run with `--offline` / `-n` because Avast
+      # intercepts HTTPS on the development machine (docs/environment.md §3). A runner has no
+      # such interception, so the RustSec database is fetched fresh — which is also the answer
+      # to "when was the local copy last refreshed": here, on every push, whether or not
+      # anyone remembered.
+      - name: Dependency policy
+        run: cargo deny check bans licenses sources advisories
+
+      - name: Advisories
+        run: cargo audit
+
+      # No `-D warnings`. `diag!` is `#[cfg(debug_assertions)]`, so its arguments go unused
+      # once it compiles away and the release profile warns where clippy's dev-profile pass
+      # cannot see it. Read them in the log; they do not fail the build.
+      - name: Release build
+        run: cargo build --release
+
+      - name: Binary size
+        run: |
+          $exe = Get-Item target/release/lexiswitch.exe
+          $mb = [math]::Round($exe.Length / 1MB, 2)
+          Write-Host "lexiswitch.exe: $mb MB ($($exe.Length) bytes) — budget is 5 MB"
+          Add-Content $env:GITHUB_STEP_SUMMARY "lexiswitch.exe: $mb MB of the 5 MB budget"

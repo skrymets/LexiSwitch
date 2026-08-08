@@ -1,0 +1,187 @@
+name: Release
+
+# The tag is the release. Nothing else publishes — no branch push, no manual button — so a
+# version that shipped is always one that exists in git history under that exact name.
+# `DEV.md` holds the whole procedure, including the version bump that has to land first.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Creating the release and uploading its assets is the only write this needs. The default
+# token gets nothing else.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    # Not ubuntu. `lexiswitch-win` is Win32 FFI top to bottom and `cargo test --workspace`
+    # builds it, so a Linux runner cannot compile this workspace at all — and the artifact is
+    # an MSVC-linked Windows binary in any case.
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup component add clippy
+          rustc --version
+
+      # Third-party actions are on major-version tags rather than commit SHAs. That is a known
+      # gap, not an oversight — see DEV.md, "Pinning the third-party actions".
+      - uses: Swatinem/rust-cache@v2
+
+      # Prebuilt binaries. `cargo install` compiles both from source and costs minutes on every
+      # release.
+      - name: Install cargo-deny and cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+
+      # ---------------------------------------------------------------------------------
+      # Gates. Every one of these runs before anything is published, so a release that fails
+      # leaves no release object and no assets behind — only a tag to delete.
+      # ---------------------------------------------------------------------------------
+
+      - name: Tag matches Cargo.toml
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $expected = $env:TAG -replace '^v', ''
+          $meta = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $actual = ($meta.packages | Where-Object { $_.name -eq 'lexiswitch' }).version
+          if ($actual -ne $expected) {
+            throw "Tag $env:TAG wants version $expected, but Cargo.toml has $actual. Bump the workspace version and commit it, then delete and re-push the tag (DEV.md has the commands)."
+          }
+          Write-Host "version $actual"
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Online, deliberately. Locally these two must run with `--offline` / `-n` because Avast
+      # intercepts HTTPS on the development machine (docs/environment.md §3). A runner has no
+      # such interception, so the RustSec database is fetched fresh here — which makes this
+      # gate strictly stronger than the local one, and removes "the local copy was stale" as a
+      # way for an advisory to reach a release.
+      - name: Dependency policy
+        run: cargo deny check bans licenses sources advisories
+
+      - name: Advisories
+        run: cargo audit
+
+      # No `-D warnings` on this one. `diag!` is `#[cfg(debug_assertions)]`, so its arguments
+      # go unused once it compiles away, and the release profile warns where clippy's
+      # dev-profile pass cannot see it. Those warnings belong in the log, not in a dead release.
+      - name: Build
+        run: cargo build --release
+
+      - name: Binary size
+        run: |
+          $exe = Get-Item target/release/lexiswitch.exe
+          $mb = [math]::Round($exe.Length / 1MB, 2)
+          Write-Host "lexiswitch.exe: $mb MB ($($exe.Length) bytes)"
+          Add-Content $env:GITHUB_STEP_SUMMARY "lexiswitch.exe: $mb MB of the 5 MB budget"
+          if ($exe.Length -gt 5MB) {
+            throw "Over the 5 MB budget. That is a stated constraint rather than a target — see CLAUDE.md, 'Non-negotiable constraints'."
+          }
+
+      # ---------------------------------------------------------------------------------
+      # Package.
+      # ---------------------------------------------------------------------------------
+
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $name = "lexiswitch-$env:TAG-x86_64-pc-windows-msvc"
+          $stage = "dist/$name"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          # INSTALL.txt rather than README.md: the README's links are repo-relative, so every
+          # screenshot in it is a broken image once it is sitting in someone's unzipped folder.
+          # The README is one click away online and says so at the bottom of INSTALL.txt.
+          Copy-Item target/release/lexiswitch.exe $stage
+          Copy-Item packaging/INSTALL.txt         $stage
+          Copy-Item config.example.toml           $stage
+
+          $zip = "dist/$name.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip
+
+          # sha256sum's own format ("<hash>  <filename>"), so `sha256sum -c` verifies the file
+          # as-is and a Get-FileHash user can read the hash straight off the line.
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -Encoding ascii
+
+          Add-Content $env:GITHUB_ENV "ZIP_PATH=$zip"
+          Add-Content $env:GITHUB_ENV "SHA_PATH=$zip.sha256"
+          Add-Content $env:GITHUB_ENV "ASSET_NAME=$name"
+          Add-Content $env:GITHUB_STEP_SUMMARY "SHA-256: $hash"
+
+      # ---------------------------------------------------------------------------------
+      # Publish.
+      # ---------------------------------------------------------------------------------
+
+      - name: Publish release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The generated commit/PR list is fetched separately rather than through
+          # `gh release create --generate-notes`, so the preamble goes above it rather than
+          # below and the finished body is in the log before anything is public.
+          $generated = gh api "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$env:TAG" --jq .body
+
+          # Single-quoted here-string: no PowerShell interpolation and no backtick escaping, so
+          # the markdown below is literally what ships. __ASSET__ is substituted after.
+          $preamble = @'
+          ## Install
+
+          1. Download the `.zip` below and unzip it anywhere. There is no installer.
+          2. Run `lexiswitch.exe`. It goes to the notification area and tells you its shortcuts.
+          3. Select some text and press `Win+Shift+Pause` to fix the layout it was typed in, or
+             `Win+Ctrl+Pause` to change its case.
+
+          Needs Windows 11 and **at least two keyboard layouts installed**. Nothing is written
+          outside `%APPDATA%\LexiSwitch`.
+
+          ## Verify the download
+
+          The binary is unsigned, so this hash is the only integrity signal there is.
+
+          ```powershell
+          (Get-FileHash __ASSET__.zip -Algorithm SHA256).Hash.ToLower()
+          ```
+
+          Compare it against the `.sha256` asset.
+
+          ---
+          '@ -replace '__ASSET__', $env:ASSET_NAME
+
+          Set-Content -Path notes.md -Value $preamble  -Encoding utf8
+          Add-Content -Path notes.md -Value $generated -Encoding utf8
+          Get-Content notes.md
+
+          # A tag with a hyphen in it — v0.2.0-rc.1 — is a prerelease. Plain v0.2.0 is not.
+          $ghArgs = @(
+            'release', 'create', $env:TAG,
+            $env:ZIP_PATH, $env:SHA_PATH,
+            '--title', $env:TAG,
+            '--notes-file', 'notes.md',
+            '--verify-tag'
+          )
+          if ($env:TAG -match '-') { $ghArgs += '--prerelease' }
+
+          gh @ghArgs

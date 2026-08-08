@@ -1,0 +1,86 @@
+LexiSwitch
+Offline keyboard-layout correction and case conversion for Windows 11.
+
+
+WHAT IS IN THIS ARCHIVE
+
+    lexiswitch.exe        the whole program
+    config.example.toml   a commented copy of every setting, to read before you start
+    INSTALL.txt           this file
+
+
+YOU NEED
+
+    Windows 11, and at least two keyboard layouts installed. With only one there
+    is nothing to convert between, and LexiSwitch says so and stops rather than
+    sitting in the notification area doing nothing.
+
+
+RUNNING IT
+
+    1. Unzip it anywhere you like. There is no installer, and nothing is written
+       outside %APPDATA%\LexiSwitch.
+
+    2. Run lexiswitch.exe. It goes to the notification area and tells you its
+       shortcuts.
+
+    3. Select some text and press one of them:
+
+           Win+Shift+Pause     fix the layout it was typed in
+           Win+Ctrl+Pause      change its case
+
+       Nothing is written to your document until you press Enter. Esc leaves
+       everything exactly as it was.
+
+    Only one copy runs at a time. Starting a second makes the first one announce
+    itself instead.
+
+
+THE BINARY IS UNSIGNED
+
+    Windows will say the publisher is unknown. The .sha256 file published beside
+    the archive is the only integrity signal there is, so check it against what
+    you downloaded before running anything:
+
+        (Get-FileHash <the .zip you downloaded> -Algorithm SHA256).Hash.ToLower()
+
+    That has to match the hash in the .sha256 file. If it does not, delete the
+    download.
+
+
+STARTING IT WITH WINDOWS
+
+    Put a shortcut to lexiswitch.exe in:
+
+        %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+
+
+SETTINGS
+
+    Everything is optional. Right-click the tray icon and choose "Open
+    configuration file"; it creates a commented example at
+
+        %APPDATA%\LexiSwitch\config.toml
+
+    on first use, and picks up changes without a restart. A file that does not
+    parse is rejected whole -- the settings already running stay in force and the
+    tray says which line it choked on.
+
+    One other file is written, %APPDATA%\LexiSwitch\state.toml, holding only how
+    many times each case style has been used. Style names and integers, nothing
+    else.
+
+
+REMOVING IT
+
+    Quit it from the tray, delete lexiswitch.exe, and delete the folder
+    %APPDATA%\LexiSwitch. There is nothing in the registry and no service.
+
+
+EVERYTHING ELSE
+
+    Every key, every setting, the screenshots, the known limits, and what the
+    program deliberately does not do -- all of it is in the README, which is kept
+    online rather than copied in here so it cannot go stale in your download:
+
+        https://github.com/skrymets/LexiSwitch#readme

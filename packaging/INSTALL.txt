@@ -54,6 +54,17 @@ STARTING IT WITH WINDOWS
 
         %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
 
+    To upgrade, quit it from the tray and unzip the new version over the old
+    one. The program is always called lexiswitch.exe, so the shortcut keeps
+    working.
+
+
+WHICH VERSION IS THIS
+
+    Right-click the tray icon: the first line of the menu names the version.
+    Without running it, right-click lexiswitch.exe, choose Properties, and look
+    under Details.
+
 
 SETTINGS
 

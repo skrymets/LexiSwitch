@@ -177,3 +177,19 @@ Open the history panel with `Win+V` and keep it in view.
 **E4 and E5 are the pair that matters.** Everything else here is confirmed by script; these two
 are the only evidence that the opt-out does anything, and the script deliberately does not claim
 they passed.
+
+## Group F — the version (added 2026-10-28)
+
+The version resource is read back by CI and by the release (`Version metadata`), through the same
+API Explorer uses, so its contents are already asserted. What only a person can confirm is that
+the version is where a user would look for it.
+
+Use a release build: `cargo build --release`, then run `target\release\lexiswitch.exe`.
+
+| #  | Do this                                                   | Expect                                                                                          | Saw |
+|----|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------|-----|
+| F1 | Right-click the tray icon                                 | The first line reads `LexiSwitch <version>`, greyed, with a separator under it                  |     |
+| F2 | Click that first line                                     | The menu closes and nothing else happens                                                        |     |
+| F3 | Choose **Diagnostics**                                    | The balloon includes `Version <version>.`                                                       |     |
+| F4 | Explorer → right-click `lexiswitch.exe` → Properties → Details | Product name `LexiSwitch`; file version and product version are `<version>`              |     |
+| F5 | Task Manager → Processes                                  | The process is listed as `LexiSwitch`, not as a sentence                                        |     |

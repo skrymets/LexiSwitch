@@ -36,12 +36,19 @@ Check the [Actions tab](https://github.com/skrymets/LexiSwitch/actions) — the 
 ### 2. Bump the version
 
 One place only: `version` under `[workspace.package]` in the root `Cargo.toml`. All three
-crates inherit it with `version.workspace = true`.
+crates inherit it with `version.workspace = true`, and everything else that shows a version —
+the tray menu, Diagnostics, the executable's version resource, the release title and the asset
+names — derives from it at build time. There is no second copy to keep in step.
 
 ```toml
 [workspace.package]
 version = "0.2.0"
 ```
+
+Which number to change is [ADR-0016](docs/adr/0016-semantic-versioning.md)'s rule: **MAJOR**
+when a configuration file that worked stops working or means something else, a default
+shortcut changes, or a feature goes; **MINOR** when something is added and nothing breaks;
+**PATCH** for a fix. While the version is `0.x`, shift that one place to the right.
 
 Then refresh the lockfile, which carries the same three version numbers:
 
@@ -60,7 +67,11 @@ cargo deny check bans licenses sources
 cargo deny --offline check advisories
 cargo audit -n
 cargo build --release
+(Get-Item target\release\lexiswitch.exe).VersionInfo | Format-List ProductVersion, FileVersion, IsPreRelease
 ```
+
+The last line is what Explorer's Properties → Details reads; it should say the version you just
+set. CI and the release both check it.
 
 `--offline` and `-n` are required **here and not on CI**. Avast intercepts HTTPS on this
 machine, so fetching the RustSec database fails TLS verification and both tools fall back to
@@ -96,21 +107,28 @@ it will:
 
 1. check the tag against `Cargo.toml` — `v0.2.0` against `0.2.0`
 2. run clippy, the tests, `cargo deny` and `cargo audit`
-3. build release and fail if `lexiswitch.exe` exceeds 5 MB
+3. build release and fail if `lexiswitch.exe` exceeds 5 MB, or if its version resource does
+   not say `0.2.0`
 4. stage `lexiswitch.exe`, `packaging/INSTALL.txt` and `config.example.toml` into
-   `lexiswitch-v0.2.0-x86_64-pc-windows-msvc.zip`, and write its `.sha256` beside it
-5. create the release with an install preamble followed by GitHub's generated list of
-   commits since the previous tag
+   `lexiswitch-0.2.0-x86_64-pc-windows-msvc.zip`, copy the program alone as
+   `lexiswitch-0.2.0.exe`, and write a `.sha256` beside each
+5. create the release titled `LexiSwitch 0.2.0`, with an install preamble followed by GitHub's
+   generated list of commits since the previous tag
 
 Steps 1–3 are all before anything is published, so a failure leaves no release object and no
 assets — only a tag to delete.
 
+Asset names carry the version without the tag's `v`; the program inside the zip stays
+`lexiswitch.exe`, so a user unpacking a new version over an old one keeps every shortcut that
+points at it. Releases up to `0.1.0` used `lexiswitch-v<version>-…` and keep those names.
+
 ### 7. Check the result
 
-Download the zip from the release page and confirm the hash matches the `.sha256` asset:
+Download both files from the release page and confirm each hash matches its `.sha256` asset:
 
 ```powershell
-(Get-FileHash lexiswitch-v0.2.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash lexiswitch-0.2.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash lexiswitch-0.2.0.exe -Algorithm SHA256).Hash.ToLower()
 ```
 
 Then unzip it somewhere clean and run it once. The workflow proves it builds; only you can

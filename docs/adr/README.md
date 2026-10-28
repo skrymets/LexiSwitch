@@ -21,6 +21,7 @@ ADR that supersedes the old one rather than editing history.
 | [0013](0013-memory-budget-is-private-working-set.md)      | The memory budget is private working set                       | Accepted                                                          |
 | [0014](0014-case-conversion-is-a-separate-transaction.md) | Case conversion is a separate transaction                      | Accepted                                                          |
 | [0015](0015-usage-memory-outside-configuration.md)        | Usage memory lives outside the configuration file              | Accepted                                                          |
+| [0016](0016-semantic-versioning.md)                       | Semantic versioning, declared once                             | Accepted                                                          |
 
 ## Format
 

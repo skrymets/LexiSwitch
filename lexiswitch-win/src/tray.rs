@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 
-use windows::core::{w, PCWSTR};
+use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_LARGE_ICON, NIIF_NONE,
@@ -183,11 +183,20 @@ impl Tray {
     /// `SetForegroundWindow` before `TrackPopupMenu` is not optional: without it the menu
     /// does not dismiss when the user clicks elsewhere, and stays on screen forever. This is
     /// a documented quirk of tray menus.
-    pub fn show_menu(&self, state: &AgentState) -> Option<MenuCommand> {
+    ///
+    /// `title` heads the menu — the product and its version, which is where a user reporting a
+    /// problem looks for it. It is the caller's to word, so this crate does not decide what the
+    /// product calls itself.
+    pub fn show_menu(&self, state: &AgentState, title: &str) -> Option<MenuCommand> {
+        let title = HSTRING::from(title);
         // SAFETY: the menu is created, used and destroyed within this call. Every pointer
-        // passed is to a local that outlives the call.
+        // passed is to a local that outlives the call, `title` included.
         unsafe {
             let menu = CreatePopupMenu().ok()?;
+            // Id 0 is what `TrackPopupMenu` returns for "nothing chosen", so this line cannot be
+            // mistaken for a command even if it were chosen; greying it says so as well.
+            let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &title);
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             // Conversion from the menu, first because it is the only way to convert while the
             // shortcut is held by another application. Not a convenience: without it a conflict
             // leaves a program that runs and can do nothing at all.

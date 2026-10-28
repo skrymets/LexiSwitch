@@ -118,6 +118,8 @@ Right-click it for everything the program can do:
 
 ![The tray menu](docs/screenshots/tray-menu.png)
 
+- **LexiSwitch** and a version number — the first line says which version is running. It is
+  not a command. File Properties → Details shows the same without running it.
 - **Convert selection** and **Change case…** — the same two transactions, for when a shortcut is
   unavailable
 - **Disable LexiSwitch** — the shortcuts stop converting until you enable it again

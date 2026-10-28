@@ -98,15 +98,42 @@ jobs:
             throw "Over the 5 MB budget. That is a stated constraint rather than a target — see CLAUDE.md, 'Non-negotiable constraints'."
           }
 
+      # Read back through the API Explorer uses, rather than trusting the bytes build.rs wrote: a
+      # version resource Windows cannot parse is silently ignored, and this is where that shows.
+      - name: Version metadata
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG -replace '^v', ''
+          $core = ($version -split '[-+]')[0]
+          $info = (Get-Item target/release/lexiswitch.exe).VersionInfo
+          $numeric = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart).$($info.FilePrivatePart)"
+          $problems = @()
+          if ($info.ProductName -ne 'LexiSwitch') { $problems += "ProductName is '$($info.ProductName)'" }
+          if ($info.ProductVersion -ne $version)  { $problems += "ProductVersion is '$($info.ProductVersion)'" }
+          if ($info.FileVersion -ne $version)     { $problems += "FileVersion is '$($info.FileVersion)'" }
+          if ($numeric -ne "$core.0")             { $problems += "numeric version is $numeric" }
+          if ($info.IsPreRelease -ne ($version -match '-')) { $problems += "pre-release flag is $($info.IsPreRelease)" }
+          if ($problems) {
+            throw "lexiswitch.exe does not describe itself as $version`: $($problems -join '; ')."
+          }
+          Write-Host "version resource: $version ($numeric), pre-release $($info.IsPreRelease)"
+
       # ---------------------------------------------------------------------------------
       # Package.
       # ---------------------------------------------------------------------------------
 
+      # Files are named by the version, not the tag: the tag needs its `v` for the trigger above,
+      # a file name does not (ADR-0016). Inside the zip the program keeps the stable name
+      # `lexiswitch.exe`, so unpacking a newer one over an older one changes nothing that points
+      # at it; the standalone copy carries the version for anyone keeping several side by side.
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          $name = "lexiswitch-$env:TAG-x86_64-pc-windows-msvc"
+          $version = $env:TAG -replace '^v', ''
+          $name = "lexiswitch-$version-x86_64-pc-windows-msvc"
+          $exe = "lexiswitch-$version.exe"
           $stage = "dist/$name"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
@@ -125,10 +152,19 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path "$zip.sha256" -Value "$hash  $name.zip" -Encoding ascii
 
+          Copy-Item target/release/lexiswitch.exe "dist/$exe"
+          $exeHash = (Get-FileHash "dist/$exe" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$exe.sha256" -Value "$exeHash  $exe" -Encoding ascii
+
+          Add-Content $env:GITHUB_ENV "VERSION=$version"
           Add-Content $env:GITHUB_ENV "ZIP_PATH=$zip"
           Add-Content $env:GITHUB_ENV "SHA_PATH=$zip.sha256"
+          Add-Content $env:GITHUB_ENV "EXE_PATH=dist/$exe"
+          Add-Content $env:GITHUB_ENV "EXE_SHA_PATH=dist/$exe.sha256"
           Add-Content $env:GITHUB_ENV "ASSET_NAME=$name"
-          Add-Content $env:GITHUB_STEP_SUMMARY "SHA-256: $hash"
+          Add-Content $env:GITHUB_ENV "EXE_NAME=$exe"
+          Add-Content $env:GITHUB_STEP_SUMMARY "SHA-256 ${name}.zip: $hash"
+          Add-Content $env:GITHUB_STEP_SUMMARY "SHA-256 ${exe}: $exeHash"
 
       # ---------------------------------------------------------------------------------
       # Publish.
@@ -145,12 +181,14 @@ jobs:
           $generated = gh api "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$env:TAG" --jq .body
 
           # Single-quoted here-string: no PowerShell interpolation and no backtick escaping, so
-          # the markdown below is literally what ships. __ASSET__ is substituted after.
+          # the markdown below is literally what ships. __ASSET__ and __EXE__ are substituted after.
           $preamble = @'
           ## Install
 
-          1. Download the `.zip` below and unzip it anywhere. There is no installer.
+          1. Download the `.zip` below and unzip it anywhere. There is no installer. (Or take
+             `__EXE__` on its own: the same program, without the example configuration.)
           2. Run `lexiswitch.exe`. It goes to the notification area and tells you its shortcuts.
+             Right-click the tray icon to see which version is running.
           3. Select some text and press `Win+Shift+Pause` to fix the layout it was typed in, or
              `Win+Ctrl+Pause` to change its case.
 
@@ -159,16 +197,17 @@ jobs:
 
           ## Verify the download
 
-          The binary is unsigned, so this hash is the only integrity signal there is.
+          The binary is unsigned, so these hashes are the only integrity signal there is.
 
           ```powershell
           (Get-FileHash __ASSET__.zip -Algorithm SHA256).Hash.ToLower()
+          (Get-FileHash __EXE__ -Algorithm SHA256).Hash.ToLower()
           ```
 
-          Compare it against the `.sha256` asset.
+          Compare each against the matching `.sha256` asset.
 
           ---
-          '@ -replace '__ASSET__', $env:ASSET_NAME
+          '@ -replace '__ASSET__', $env:ASSET_NAME -replace '__EXE__', $env:EXE_NAME
 
           Set-Content -Path notes.md -Value $preamble  -Encoding utf8
           Add-Content -Path notes.md -Value $generated -Encoding utf8
@@ -177,8 +216,8 @@ jobs:
           # A tag with a hyphen in it — v0.2.0-rc.1 — is a prerelease. Plain v0.2.0 is not.
           $ghArgs = @(
             'release', 'create', $env:TAG,
-            $env:ZIP_PATH, $env:SHA_PATH,
-            '--title', $env:TAG,
+            $env:ZIP_PATH, $env:SHA_PATH, $env:EXE_PATH, $env:EXE_SHA_PATH,
+            '--title', "LexiSwitch $env:VERSION",
             '--notes-file', 'notes.md',
             '--verify-tag'
           )

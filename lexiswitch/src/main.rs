@@ -37,6 +37,13 @@ mod worker;
 use configwatch::{ConfigWatcher, EventLog, Loaded};
 use worker::{Job, Outcome, Worker};
 
+/// The version, from the workspace manifest — the one place it is declared (ADR-0016). The
+/// release, the file's version resource and this are the same string by construction.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What heads the tray menu.
+const TITLE: &str = concat!("LexiSwitch ", env!("CARGO_PKG_VERSION"));
+
 fn main() {
     if let Err(e) = run() {
         // Startup failures happen before the tray exists, so they have nowhere else to go.
@@ -342,7 +349,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 // WM_CONTEXTMENU as well as WM_RBUTTONUP: which one the shell sends depends on
                 // the notify-icon protocol version, and accepting both costs nothing.
                 if click == WM_RBUTTONUP || click == WM_CONTEXTMENU {
-                    command = tray.show_menu(&state);
+                    command = tray.show_menu(&state, TITLE);
                 }
             }
             WM_COMMAND => {
@@ -448,8 +455,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     tray.notify(
                         &state.summary(),
                         &format!(
-                            "{}\nLayouts installed: {}. Configuration: {}. Logging: {}.",
+                            "{}\nVersion {}. Layouts installed: {}. Configuration: {}. Logging: {}.",
                             state.explanation(),
+                            VERSION,
                             layout_count,
                             config_path
                                 .as_deref()

@@ -82,3 +82,23 @@ jobs:
           $mb = [math]::Round($exe.Length / 1MB, 2)
           Write-Host "lexiswitch.exe: $mb MB ($($exe.Length) bytes) — budget is 5 MB"
           Add-Content $env:GITHUB_STEP_SUMMARY "lexiswitch.exe: $mb MB of the 5 MB budget"
+
+      # The release gate of the same name, against the manifest rather than a tag, so a version
+      # resource Windows cannot read is found on the commit that broke it rather than at release.
+      - name: Version metadata
+        run: |
+          $meta = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object { $_.name -eq 'lexiswitch' }).version
+          $core = ($version -split '[-+]')[0]
+          $info = (Get-Item target/release/lexiswitch.exe).VersionInfo
+          $numeric = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart).$($info.FilePrivatePart)"
+          $problems = @()
+          if ($info.ProductName -ne 'LexiSwitch') { $problems += "ProductName is '$($info.ProductName)'" }
+          if ($info.ProductVersion -ne $version)  { $problems += "ProductVersion is '$($info.ProductVersion)'" }
+          if ($info.FileVersion -ne $version)     { $problems += "FileVersion is '$($info.FileVersion)'" }
+          if ($numeric -ne "$core.0")             { $problems += "numeric version is $numeric" }
+          if ($info.IsPreRelease -ne ($version -match '-')) { $problems += "pre-release flag is $($info.IsPreRelease)" }
+          if ($problems) {
+            throw "lexiswitch.exe does not describe itself as $version`: $($problems -join '; ')."
+          }
+          Write-Host "version resource: $version ($numeric), pre-release $($info.IsPreRelease)"

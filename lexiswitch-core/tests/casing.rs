@@ -78,6 +78,7 @@ fn every_style_against_one_phrase() {
         (Style::KebabUpper, "HELLO-WORLD-42-BYE"),
         (Style::Sentence, "Hello world 42 bye"),
         (Style::Title, "Hello World 42 Bye"),
+        (Style::Abbreviation, "HW42B"),
     ];
     for (style, want) in expected {
         assert_eq!(render(text, style, &plain()), want, "{}", style.label());
@@ -498,7 +499,7 @@ fn an_unknown_identifier_is_declined() {
     assert_eq!(Style::from_id("morse_code"), None);
 }
 
-/// The three groups are the user's own grouping, and every style is in exactly one.
+/// The groups are the user's own grouping, and every style is in exactly one.
 #[test]
 fn the_groups_partition_the_styles() {
     let mut seen = Vec::new();
@@ -507,6 +508,16 @@ fn the_groups_partition_the_styles() {
         seen.extend_from_slice(group);
     }
     assert_eq!(seen, Style::ALL.to_vec(), "the groups are not the list, in order");
+}
+
+/// The abbreviation is neither an identifier nor a sentence style, so it stands in a group of
+/// its own at the end, and its label is written in its own style like every other label.
+#[test]
+fn the_abbreviation_is_alone_in_the_last_group() {
+    assert_eq!(Style::GROUPS.len(), 4);
+    assert_eq!(Style::GROUPS[3], &[Style::Abbreviation]);
+    assert_eq!(Style::Abbreviation.label(), "ABBR");
+    assert_eq!(Style::Abbreviation.id(), "abbreviation");
 }
 
 // --- identifier styles across lines --------------------------------------------------
@@ -617,4 +628,137 @@ fn a_whitespace_only_selection_survives_every_paint_computation() {
             }
         }
     }
+}
+
+// --- the abbreviation ----------------------------------------------------------------
+//
+// Each word becomes its first character, uppercased, with nothing between — keeping what is
+// already abbreviated: whole numbers, and capitals. The one exception is a line in capitals
+// throughout with several words, which is shouting rather than abbreviation and is shortened
+// word by word. Any character that is not a letter or a digit separates words, for this style
+// only.
+
+/// Every label in the window, abbreviated. The labels are a ready-made set covering each way a
+/// word boundary is found: spaces, `_`, `-`, `.`, and humps — and both readings of capitals.
+#[test]
+fn every_label_abbreviates_by_its_words() {
+    let expected = [
+        (Style::AsTyped, "AT"),
+        (Style::Invert, "IC"),
+        (Style::Lower, "L"),
+        (Style::Upper, "UPPERCASE"),
+        (Style::Camel, "CC"),
+        (Style::Snake, "SC"),
+        (Style::Dot, "DC"),
+        (Style::KebabLower, "KL"),
+        (Style::Pascal, "PC"),
+        (Style::ScreamingSnake, "SSC"),
+        (Style::CapitalizedSnake, "CSC"),
+        (Style::KebabUpper, "KU"),
+        (Style::Sentence, "FWC"),
+        (Style::Title, "WC"),
+        (Style::Abbreviation, "ABBR"),
+    ];
+    for (style, want) in expected {
+        assert_eq!(only(Style::Abbreviation, style.label()), want, "{}", style.label());
+    }
+}
+
+/// Any character that is not a letter or a digit separates words, so a path abbreviates by its
+/// parts and a word that opens with a quote by its first letter.
+#[test]
+fn an_abbreviation_splits_at_anything_but_letters_and_digits() {
+    assert_eq!(
+        only(Style::Abbreviation, "openspec/changes/add-abbreviation-case-style"),
+        "OCAACS"
+    );
+    assert_eq!(only(Style::Abbreviation, "/opsx:archive"), "OA");
+    assert_eq!(only(Style::Abbreviation, "\"hello\" world"), "HW");
+    assert_eq!(only(Style::Abbreviation, "hello !!! world"), "HW");
+}
+
+/// That rule is the abbreviation's alone. Every other style still finds words where it did.
+#[test]
+fn other_styles_keep_their_word_boundaries() {
+    assert_eq!(only(Style::Snake, "a/b"), "ab");
+    assert_eq!(only(Style::Snake, "HTTPServer"), "httpserver");
+}
+
+/// A number is kept whole, until the digits option takes it away.
+#[test]
+fn an_abbreviation_keeps_numbers_whole_unless_they_are_stripped() {
+    let strips = Strips {
+        digits: true,
+        ..plain()
+    };
+    assert_eq!(only(Style::Abbreviation, "Windows 11"), "W11");
+    assert_eq!(only(Style::Abbreviation, "All 14 of your examples"), "A14OYE");
+    assert_eq!(render("Windows 11", Style::Abbreviation, &strips), "W");
+}
+
+/// Capitals in mixed text are already abbreviated and are kept, acronym and all.
+#[test]
+fn an_abbreviation_keeps_capitals_in_mixed_text() {
+    assert_eq!(only(Style::Abbreviation, "HTTPServer"), "HTTPS");
+    assert_eq!(only(Style::Abbreviation, "привіт світ → ПС"), "ПСПС");
+}
+
+/// A single word in capitals cannot be told apart from an acronym, so it is kept — and the row
+/// says that applying it would change nothing.
+#[test]
+fn a_single_word_in_capitals_is_kept() {
+    for text in ["ABBR", "UPPERCASE"] {
+        let row = generate(text, &plain())
+            .into_iter()
+            .find(|r| r.style == Style::Abbreviation)
+            .unwrap();
+        assert_eq!(row.text, text);
+        assert!(!row.changes, "{text:?}");
+    }
+}
+
+/// Several words in capitals throughout are shouting, not abbreviations, and are shortened word
+/// by word.
+#[test]
+fn several_words_in_capitals_are_shortened() {
+    assert_eq!(only(Style::Abbreviation, "SCREAMING_SNAKE_CASE"), "SSC");
+    assert_eq!(only(Style::Abbreviation, "KEBAB-UPPERCASE"), "KU");
+    assert_eq!(only(Style::Abbreviation, "WINDOWS 11"), "W11");
+}
+
+/// Ukrainian abbreviates and uppercases like anything else.
+#[test]
+fn ukrainian_abbreviates() {
+    assert_eq!(only(Style::Abbreviation, "привіт світ"), "ПС");
+}
+
+/// Each line is abbreviated on its own and the break survives exactly as written; the line
+/// options are how to get one abbreviation for the whole selection.
+#[test]
+fn an_abbreviation_is_per_line_unless_lines_are_joined() {
+    assert_eq!(only(Style::Abbreviation, "snake case\ndot case"), "SC\nDC");
+    assert_eq!(only(Style::Abbreviation, "snake case\r\ndot case"), "SC\r\nDC");
+    for lines in [Lines::Join, Lines::Remove] {
+        let strips = Strips {
+            lines,
+            ..plain()
+        };
+        assert_eq!(render("snake case\ndot case", Style::Abbreviation, &strips), "SCDC");
+    }
+}
+
+/// There is no whitespace in an abbreviation for the space options to act on, and the window
+/// says so by dimming them.
+#[test]
+fn the_space_options_do_not_affect_an_abbreviation() {
+    let text = "hello   wide\tworld";
+    assert!(!toggle_affects(text, Style::Abbreviation, &plain(), Toggle::RemoveSpaces));
+    assert!(!toggle_affects(text, Style::Abbreviation, &plain(), Toggle::NormalizeSpaces));
+}
+
+/// Punctuation never reaches an abbreviation, so stripping it cannot change one.
+#[test]
+fn the_punctuation_option_does_not_affect_an_abbreviation() {
+    let text = "hello, world! (again)";
+    assert!(!toggle_affects(text, Style::Abbreviation, &plain(), Toggle::Punctuation));
 }

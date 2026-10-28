@@ -34,7 +34,7 @@
 /// One way of re-casing the selection.
 ///
 /// The order is the order they are shown in, and it is the user's own grouping: the plain case
-/// operations, then the identifier styles, then the sentence styles.
+/// operations, then the identifier styles, then the sentence styles, then the abbreviation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
     AsTyped,
@@ -51,11 +51,12 @@ pub enum Style {
     KebabUpper,
     Sentence,
     Title,
+    Abbreviation,
 }
 
 impl Style {
     /// Every style, in the order they are offered.
-    pub const ALL: [Style; 14] = [
+    pub const ALL: [Style; 15] = [
         Style::AsTyped,
         Style::Invert,
         Style::Lower,
@@ -70,10 +71,11 @@ impl Style {
         Style::KebabUpper,
         Style::Sentence,
         Style::Title,
+        Style::Abbreviation,
     ];
 
     /// The same styles, grouped as they are drawn. Concatenating the groups gives [`Style::ALL`].
-    pub const GROUPS: [&'static [Style]; 3] = [
+    pub const GROUPS: [&'static [Style]; 4] = [
         &[Style::AsTyped, Style::Invert, Style::Lower, Style::Upper],
         &[
             Style::Camel,
@@ -86,6 +88,7 @@ impl Style {
             Style::KebabUpper,
         ],
         &[Style::Sentence, Style::Title],
+        &[Style::Abbreviation],
     ];
 
     /// What the window calls it.
@@ -105,6 +108,7 @@ impl Style {
             Style::KebabUpper => "KEBAB-UPPERCASE",
             Style::Sentence => "First word capitalized",
             Style::Title => "Words Capitalized",
+            Style::Abbreviation => "ABBR",
         }
     }
 
@@ -128,6 +132,7 @@ impl Style {
             Style::KebabUpper => "kebab_upper",
             Style::Sentence => "sentence",
             Style::Title => "title",
+            Style::Abbreviation => "abbreviation",
         }
     }
 
@@ -324,6 +329,9 @@ pub fn toggle_affects(text: &str, style: Style, strips: &Strips, toggle: Toggle)
 
 /// Apply one style with these options.
 pub fn render(text: &str, style: Style, strips: &Strips) -> String {
+    if style == Style::Abbreviation {
+        return abbreviate(text, strips);
+    }
     let tokens = split(text);
 
     // The leading separator is index 0; the one following word *i* is index *i+1*. Every
@@ -587,7 +595,68 @@ fn case_word(word: &str, style: Style, index: usize) -> String {
                 word.to_lowercase()
             }
         }
+        Style::Abbreviation => unreachable!("render hands the abbreviation to abbreviate"),
     }
+}
+
+/// The abbreviation: each word's first character, keeping what is already abbreviated.
+///
+/// Not built on [`split`], because its words are not everyone else's. Any character that is not
+/// a letter or a digit separates them — `openspec/changes` is two words here and one for
+/// `snake_case` — and whether a word is shortened depends on its whole line, which a per-word
+/// transform never sees.
+///
+/// Each line is its own abbreviation and the breaks are kept as written, as the identifier styles
+/// keep them. With the breaks joined or removed the selection is one line either way: there is no
+/// whitespace in an abbreviation for a joining space to survive as.
+fn abbreviate(text: &str, strips: &Strips) -> String {
+    if strips.lines != Lines::Keep {
+        return abbreviate_line(text, strips);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut line = String::new();
+    for c in text.chars() {
+        if is_break(c) {
+            out.push_str(&abbreviate_line(&line, strips));
+            out.push(c);
+            line.clear();
+        } else {
+            line.push(c);
+        }
+    }
+    out.push_str(&abbreviate_line(&line, strips));
+    out
+}
+
+/// One line's abbreviation.
+///
+/// Capitals and numbers are taken to be abbreviated already and are kept whole: `HTTPServer`
+/// gives `HTTPS`, `Windows 11` gives `W11`, and a lone `ABBR` gives itself back. Several words in
+/// capitals throughout are the exception — that is shouting, not a run of acronyms — and keep
+/// only their first characters and their numbers, so `SCREAMING_SNAKE_CASE` gives `SSC`.
+fn abbreviate_line(line: &str, strips: &Strips) -> String {
+    // Digits go before the line is cut, so stripping them from `v2x` leaves the one word `vx`
+    // rather than two, as the digits option does for every other style.
+    let kept: String = line
+        .chars()
+        .filter(|c| !(strips.digits && c.is_numeric()))
+        .collect();
+    let words: Vec<&str> = kept
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let shouting = words.len() > 1 && !kept.chars().any(char::is_lowercase);
+
+    let mut out = String::new();
+    for word in words {
+        let mut chars = word.chars();
+        let Some(first) = chars.next() else { continue };
+        // Uppercased whole, as `UPPERCASE` does, rather than cut to one character: `ß` gives
+        // `SS` there and gives it here.
+        out.extend(first.to_uppercase());
+        out.extend(chars.filter(|c| c.is_numeric() || (!shouting && c.is_uppercase())));
+    }
+    out
 }
 
 /// Swap one character's case, as an iterator because a single character does not always map to

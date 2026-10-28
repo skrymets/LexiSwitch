@@ -52,11 +52,18 @@ to, which is normally the next thing you were going to do anyway.
 Fourteen styles, always all of them, always in the same order: a style that would change nothing
 is dimmed rather than dropped, so the row you are aiming for is where it was last time.
 
-| Category        | Conversions                                                                                                                        |
-|-----------------|------------------------------------------------------------------------------------------------------------------------------------|
-| **Plain**       | As typed · Invert case · lowercase · UPPERCASE                                                                                     |
-| **Identifiers** | camelCase · snake_case · dot.case · kebab-lowercase · PascalCase · SCREAMING_SNAKE_CASE · Capitalized_Snake_Case · KEBAB-UPPERCASE |
-| **Prose**       | First word capitalized · Words Capitalized                                                                                         |
+| Category         | Conversions                                                                                                                        |
+|------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| **Plain**        | As typed · Invert case · lowercase · UPPERCASE                                                                                     |
+| **Identifiers**  | camelCase · snake_case · dot.case · kebab-lowercase · PascalCase · SCREAMING_SNAKE_CASE · Capitalized_Snake_Case · KEBAB-UPPERCASE |
+| **Prose**        | First word capitalized · Words Capitalized                                                                                         |
+| **Abbreviation** | ABBR                                                                                                                               |
+
+`ABBR` takes the first character of each word, uppercased, and keeps what is already
+abbreviated: numbers and capitals stay whole. `First word capitalized` gives `FWC`,
+`Windows 11` gives `W11`, `HTTPServer` gives `HTTPS`. Several words written entirely in capitals
+are shortened word by word instead, so `SCREAMING_SNAKE_CASE` gives `SSC`. Any character that is
+not a letter or a digit separates words, so `/opsx:archive` gives `OA`.
 
 **Often used** at the top holds the three styles you apply most, so the ones you actually use
 are a keystroke away. `Ctrl+R` forgets them and starts counting again.

@@ -94,6 +94,7 @@ fn main() {
         Shortcuts {
             convert: Shortcut::Registered("Shift+Pause".into()),
             case: Shortcut::Registered("Win+Ctrl+Pause".into()),
+            translit: Shortcut::Registered("Win+Alt+Pause".into()),
         },
         true,
         None,

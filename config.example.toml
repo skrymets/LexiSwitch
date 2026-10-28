@@ -43,6 +43,17 @@ convert_selection = "Win+Shift+Pause"
 # than left to fail as a registration conflict you would read as another application's fault.
 change_case = "Win+Ctrl+Pause"
 
+# Select Cyrillic text, then press this to write it in Latin letters under one of the
+# transliteration rulesets — Ukrainian (Resolution No. 55) and russian (ICAO Doc 9303) are built
+# in, and you can add your own in the "transliteration" folder beside this file. Its own window
+# again, for the same reason as change_case.
+#
+# Two shortcuts you write cannot share a combination. But if this line is absent and another
+# shortcut you wrote already uses Win+Alt+Pause — a file from before this setting existed, say —
+# that one keeps it, transliteration starts with no shortcut, and the tray says so until you
+# choose one. An upgrade never stops the program starting.
+transliterate = "Win+Alt+Pause"
+
 [layouts]
 # Preferred order by language tag — for example ["en-US", "de-DE"].
 #

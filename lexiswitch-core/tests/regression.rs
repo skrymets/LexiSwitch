@@ -74,7 +74,7 @@ fn mixed_script_strings_convert_only_what_they_can() {
 fn ukrainian_specific_letters_survive_a_trip_through_english() {
     let uk = common::load("uk");
     let en = common::load("en_us");
-    // і ї є are the letters that distinguish Ukrainian from Russian; they must map, not
+    // і ї є are the letters that distinguish Ukrainian from russian; they must map, not
     // pass through.
     assert_eq!(convert_lossy("і", &uk, &en), "s");
     assert_eq!(convert_lossy("ї", &uk, &en), "]");

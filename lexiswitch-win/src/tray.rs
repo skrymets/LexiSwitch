@@ -108,6 +108,9 @@ pub enum MenuCommand {
     Diagnostics = 106,
     ChangeCase = 107,
     ChangeCaseShortcut = 108,
+    Transliterate = 109,
+    TransliterateShortcut = 110,
+    OpenTranslitFolder = 111,
 }
 
 impl MenuCommand {
@@ -121,6 +124,9 @@ impl MenuCommand {
             106 => Some(Self::Diagnostics),
             107 => Some(Self::ChangeCase),
             108 => Some(Self::ChangeCaseShortcut),
+            109 => Some(Self::Transliterate),
+            110 => Some(Self::TransliterateShortcut),
+            111 => Some(Self::OpenTranslitFolder),
             103 => Some(Self::Quit),
             _ => None,
         }
@@ -215,6 +221,13 @@ impl Tray {
                 MenuCommand::ChangeCase as usize,
                 w!("Change case…"),
             );
+            // And transliteration, the third transaction, for the third time the same reason.
+            let _ = AppendMenuW(
+                menu,
+                if state.converts() { MF_STRING } else { MF_GRAYED },
+                MenuCommand::Transliterate as usize,
+                w!("Transliterate selection…"),
+            );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
 
             let toggle = if matches!(state, AgentState::Disabled) {
@@ -242,6 +255,12 @@ impl Tray {
             let _ = AppendMenuW(
                 menu,
                 MF_STRING,
+                MenuCommand::TransliterateShortcut as usize,
+                w!("Change transliteration shortcut…"),
+            );
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
                 MenuCommand::Diagnostics as usize,
                 w!("Diagnostics"),
             );
@@ -257,6 +276,12 @@ impl Tray {
                 MF_STRING,
                 MenuCommand::OpenConfig as usize,
                 w!("Open configuration file"),
+            );
+            let _ = AppendMenuW(
+                menu,
+                MF_STRING,
+                MenuCommand::OpenTranslitFolder as usize,
+                w!("Open transliteration folder"),
             );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, MenuCommand::Quit as usize, w!("Quit"));

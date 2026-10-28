@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use lexiswitch_core::config::Config;
+use lexiswitch_core::translit::{RulesetFailure, Rulesets};
 use lexiswitch_core::usage::Usage;
 
 /// Where the configuration lives: `%APPDATA%\LexiSwitch\config.toml`.
@@ -32,6 +33,111 @@ pub fn default_path() -> Option<PathBuf> {
 pub fn state_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .map(|appdata| PathBuf::from(appdata).join("LexiSwitch").join("state.toml"))
+}
+
+/// Where user transliteration rulesets live: `%APPDATA%\LexiSwitch\transliteration`.
+///
+/// A folder of the user's files, one ruleset each, beside the configuration file. The program
+/// reads it and never writes into it
+/// ([ADR-0017](../../docs/adr/0017-transliteration-third-transaction.md)).
+pub fn translit_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|appdata| {
+        PathBuf::from(appdata)
+            .join("LexiSwitch")
+            .join("transliteration")
+    })
+}
+
+/// Build the rulesets on offer: the built-ins overlaid by every `*.toml` in `dir`.
+///
+/// A missing folder is not a problem — it means only the built-ins. A file that cannot be read
+/// or does not validate is reported, and its version in `previous` stays in use.
+pub fn load_rulesets(dir: Option<&Path>, previous: &Rulesets) -> (Rulesets, Vec<RulesetFailure>) {
+    let files: Vec<(String, Result<String, String>)> = ruleset_files(dir)
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+            (name, text)
+        })
+        .collect();
+    Rulesets::build(&files, previous)
+}
+
+/// Every `*.toml` file directly in `dir`, in no particular order. `Rulesets::build` sorts them.
+fn ruleset_files(dir: Option<&Path>) -> Vec<PathBuf> {
+    let Some(entries) = dir.and_then(|d| std::fs::read_dir(d).ok()) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"))
+        })
+        .collect()
+}
+
+/// Polls the rulesets folder, reporting only when its listing changes.
+///
+/// The listing is names, sizes and modification times — metadata only, so a poll that finds
+/// nothing costs one directory read. The files are read only when something differs.
+pub struct RulesetWatcher {
+    dir: Option<PathBuf>,
+    last_seen: Vec<(PathBuf, u64, Option<SystemTime>)>,
+    interval: Duration,
+    next_check: std::time::Instant,
+}
+
+impl RulesetWatcher {
+    pub fn new(dir: Option<PathBuf>) -> Self {
+        let last_seen = listing(dir.as_deref());
+        Self {
+            dir,
+            last_seen,
+            interval: Duration::from_secs(2),
+            next_check: std::time::Instant::now() + Duration::from_secs(2),
+        }
+    }
+
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
+    }
+
+    /// Whether any ruleset file has appeared, gone, or changed since the last report.
+    pub fn changed(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if now < self.next_check {
+            return false;
+        }
+        self.next_check = now + self.interval;
+
+        let current = listing(self.dir.as_deref());
+        if current != self.last_seen {
+            self.last_seen = current;
+            return true;
+        }
+        false
+    }
+}
+
+fn listing(dir: Option<&Path>) -> Vec<(PathBuf, u64, Option<SystemTime>)> {
+    let mut seen: Vec<_> = ruleset_files(dir)
+        .into_iter()
+        .map(|path| {
+            let meta = std::fs::metadata(&path).ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta.and_then(|m| m.modified().ok());
+            (path, size, modified)
+        })
+        .collect();
+    seen.sort();
+    seen
 }
 
 /// Read the usage counts, treating every failure as "no memory yet".

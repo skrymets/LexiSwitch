@@ -2,8 +2,8 @@
 
 ![Application Icon](media/icons/windows/main/icon_128.png)
 
-**Fix text you typed under the wrong keyboard layout — and change the case of anything you
-select — without leaving the keyboard.**
+**Fix text you typed under the wrong keyboard layout, change the case of anything you select,
+and write Cyrillic in Latin letters — without leaving the keyboard.**
 
 An offline tray utility for Windows 11. No account, no network, no installer.
 
@@ -13,7 +13,7 @@ An offline tray utility for Windows 11. No account, no network, no installer.
 
 ## What it's for
 
-Two small problems that cost a surprising amount of time.
+Three small problems that cost a surprising amount of time.
 
 **You typed in the wrong layout.** You meant to write Ukrainian, English was still active, and
 what came out was `{jxe ltoj d nt,t pfgbnfnb/`. Retyping it is the usual answer. Select it,
@@ -23,15 +23,19 @@ press `Win+Shift+Pause`, press `Enter` — it becomes `Хочу дещо в те
 name, a shouted line has to come down to lowercase, a heading needs Every Word Capitalized.
 Select it, press `Win+Ctrl+Pause`, pick from the list.
 
-Both work in whatever you happen to be writing in — an editor, a browser field, a chat box —
-because they operate on the selection rather than on a document they had to open.
+**You need it in Latin letters.** A name for a form, a file name, an address abroad:
+`Олексій Знам'янка` has to become `Oleksii Znamianka`, by the official rules rather than by
+guesswork. Select it, press `Win+Alt+Pause`, press `Enter`.
+
+All three work in whatever you happen to be writing in — an editor, a browser field, a chat
+box — because they operate on the selection rather than on a document they had to open.
 
 ---
 
-## Two modes, two shortcuts
+## Three modes, three shortcuts
 
-They are deliberately separate. Any text can be re-cased and any text has layout candidates, so
-one merged list would be about half irrelevant every time.
+They are deliberately separate. Any text can be re-cased, any Cyrillic text has both layout
+candidates and transliterations, so one merged list would be mostly irrelevant every time.
 
 ### `Win+Shift+Pause` — fix the layout
 
@@ -49,7 +53,7 @@ to, which is normally the next thing you were going to do anyway.
 
 ![The case window](docs/screenshots/case.png)
 
-Fourteen styles, always all of them, always in the same order: a style that would change nothing
+Fifteen styles, always all of them, always in the same order: a style that would change nothing
 is dimmed rather than dropped, so the row you are aiming for is where it was last time.
 
 | Category         | Conversions                                                                                                                        |
@@ -77,9 +81,49 @@ Removing spaces does not destroy word boundaries: `Words Capitalized` with space
 `HelloWorld`, not `Helloworld`. Each line keeps its own identity unless you ask for the lines to
 be joined.
 
+### `Win+Alt+Pause` — transliterate
+
+![The transliteration window](docs/screenshots/translit.png)
+
+One row per transliteration ruleset, each showing what the selection would become. Two are built
+in:
+
+| Ruleset                           | Standard                                                       | Example                                    |
+|-----------------------------------|----------------------------------------------------------------|--------------------------------------------|
+| **Ukrainian (Resolution No. 55)** | Cabinet of Ministers of Ukraine, 2010 — passports, place names | `Щедрий Знам'янка` → `Shchedryi Znamianka` |
+| **russian (ICAO Doc 9303)**       | The passport scheme russia has used since 2014                 | `Щукин Ульяна` → `Shchukin Uliana`         |
+
+The rules that make transliteration more than a letter-for-letter swap are handled: `зг` is
+`zgh`, `я` is `ya` at the start of a word and `ia` inside one, the soft sign and the apostrophe
+disappear, and capitals follow the text — `Щедрий` gives `Shchedryi`, `ЩУКА` gives `SHCHUKA`.
+Latin letters, digits and punctuation pass through untouched. A row that would change nothing is
+dimmed, and a row that left Cyrillic letters it does not know says how many.
+
+**Your own rulesets** go in `%APPDATA%\LexiSwitch\transliteration\`, one TOML file each — tray
+menu → **Open transliteration folder**. The release zip carries
+`transliteration.example.toml`, the Ukrainian ruleset with every part of the format explained:
+
+```toml
+id     = "uk-kmu55"                 # the same id as a built-in replaces it
+name   = "Ukrainian (Resolution No. 55)"
+source = "uk-UA"
+target = "en-US"
+
+[map]                               # any length; the longest match wins
+"зг" = "zgh"
+"я"  = "ia"
+"ь"  = ""                           # empty: dropped
+
+[word_start]                        # used instead at the start of a word
+"я" = "ya"
+```
+
+Changes are picked up within seconds. A file with a mistake is reported with its line, keeps its
+last working version, and leaves every other ruleset working.
+
 ---
 
-## What both windows do
+## What every window does
 
 **Nothing is written until you press `Enter`.** Opening the window, moving through it, and
 turning options on and off change nothing in your document. `Esc` leaves everything exactly as
@@ -120,37 +164,39 @@ Right-click it for everything the program can do:
 
 - **LexiSwitch** and a version number — the first line says which version is running. It is
   not a command. File Properties → Details shows the same without running it.
-- **Convert selection** and **Change case…** — the same two transactions, for when a shortcut is
-  unavailable
+- **Convert selection**, **Change case…** and **Transliterate selection…** — the same three
+  transactions, for when a shortcut is unavailable
 - **Disable LexiSwitch** — the shortcuts stop converting until you enable it again
-- **Change conversion shortcut…** / **Change case shortcut…** — press the combination you want
+- **Change conversion shortcut…** / **Change case shortcut…** / **Change transliteration
+  shortcut…** — press the combination you want
 - **Diagnostics** — what state it is in and why
-- **Reload configuration** / **Open configuration file**
+- **Reload configuration** / **Open configuration file** / **Open transliteration folder**
 - **Quit**
 
 The icon itself says which state it is in, without hovering for the tooltip:
 
 ![The three tray icons](docs/screenshots/tray-states.png)
 
-"Needs attention" means a shortcut another program has taken, a configuration file it refused to
-load, or too few keyboard layouts to convert between. Which one it is, it tells you.
+"Needs attention" means a shortcut another program has taken, a shortcut left without a
+combination, a configuration file or transliteration ruleset it refused to load, or too few
+keyboard layouts to convert between. Which one it is, it tells you.
 
 ---
 
 ## Keys
 
-| | Layout window | Case window |
-|---|---|---|
-| Open | `Win+Shift+Pause` | `Win+Ctrl+Pause` |
-| Move | `↑` `↓` | `↑` `↓` `PgUp` `PgDn` `Home` `End` |
-| Apply | `Enter` | `Enter` |
-| Apply and switch typing layout | `Ctrl+Enter` | — |
-| Show the whole result | `Space` | `Space` |
-| Strip options | — | `1`–`6` |
-| Forget "Often used" | — | `Ctrl+R` |
-| Copy without applying | `Ctrl+C` or `Ctrl+Ins` | `Ctrl+C` or `Ctrl+Ins` |
-| Allow that copy into Clipboard History | `H` | `H` |
-| Close, changing nothing | `Esc` | `Esc` |
+| | Layout window | Case window | Transliteration window |
+|---|---|---|---|
+| Open | `Win+Shift+Pause` | `Win+Ctrl+Pause` | `Win+Alt+Pause` |
+| Move | `↑` `↓` | `↑` `↓` `PgUp` `PgDn` `Home` `End` | `↑` `↓` `PgUp` `PgDn` `Home` `End` |
+| Apply | `Enter` | `Enter` | `Enter` |
+| Apply and switch typing layout | `Ctrl+Enter` | — | — |
+| Show the whole result | `Space` | `Space` | `Space` |
+| Strip options | — | `1`–`6` | — |
+| Forget "Often used" | — | `Ctrl+R` | — |
+| Copy without applying | `Ctrl+C` or `Ctrl+Ins` | `Ctrl+C` or `Ctrl+Ins` | `Ctrl+C` or `Ctrl+Ins` |
+| Allow that copy into Clipboard History | `H` | `H` | `H` |
+| Close, changing nothing | `Esc` | `Esc` | `Esc` |
 
 ---
 
@@ -167,6 +213,8 @@ enabled = true                        # whether the shortcuts convert
 [hotkeys]
 convert_selection = "Win+Shift+Pause"
 change_case       = "Win+Ctrl+Pause"
+transliterate     = "Win+Alt+Pause"   # left unset and already used by another shortcut you
+                                      # set, it gives way: no shortcut, and the tray says so
 
 [layouts]
 candidates = []                       # e.g. ["uk-UA", "en-US"] to fix the order
@@ -185,6 +233,9 @@ enabled = false                       # event kinds and lengths only, never text
 A configuration file that does not parse is **rejected whole**: the settings you were already
 running stay in force, and the tray tells you which line it choked on. There is no half-applied
 state to get stuck in.
+
+Transliteration rulesets are the one other thing you configure, in their own folder rather than
+in this file — see [above](#winaltpause--transliterate).
 
 One other file is written, `%APPDATA%\LexiSwitch\state.toml`, and it holds only how many times
 each case style has been used — style names and integers, nothing else. Delete it, or press
@@ -217,7 +268,7 @@ else. Earlier versions did detect password fields — that was there to protect 
 that no longer exists, and its coverage inside browsers was measurably poor, so the thing it
 guarded was removed instead ([ADR-0011](docs/adr/0011-no-keyboard-observation.md)).
 
-Under 1.1 MB, no runtime, no background service.
+Under 1.3 MB, no runtime, no background service.
 
 ---
 

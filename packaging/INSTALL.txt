@@ -1,12 +1,15 @@
 LexiSwitch
-Offline keyboard-layout correction and case conversion for Windows 11.
+Offline keyboard-layout correction, case conversion and transliteration for Windows 11.
 
 
 WHAT IS IN THIS ARCHIVE
 
-    lexiswitch.exe        the whole program
-    config.example.toml   a commented copy of every setting, to read before you start
-    INSTALL.txt           this file
+    lexiswitch.exe                    the whole program
+    config.example.toml               a commented copy of every setting, to read before
+                                      you start
+    transliteration.example.toml      a transliteration ruleset to copy, every part of the
+                                      format explained
+    INSTALL.txt                       this file
 
 
 YOU NEED
@@ -28,6 +31,7 @@ RUNNING IT
 
            Win+Shift+Pause     fix the layout it was typed in
            Win+Ctrl+Pause      change its case
+           Win+Alt+Pause       write Cyrillic in Latin letters
 
        Nothing is written to your document until you press Enter. Esc leaves
        everything exactly as it was.
@@ -80,6 +84,19 @@ SETTINGS
     One other file is written, %APPDATA%\LexiSwitch\state.toml, holding only how
     many times each case style has been used. Style names and integers, nothing
     else.
+
+
+TRANSLITERATION RULESETS
+
+    Ukrainian (Resolution No. 55) and russian (ICAO Doc 9303) are built in. To
+    add your own, or to change a built-in, put ruleset files in
+
+        %APPDATA%\LexiSwitch\transliteration
+
+    ("Open transliteration folder" in the tray menu creates and opens it).
+    transliteration.example.toml in this archive is the Ukrainian ruleset with
+    every part explained; copy it there and edit it. Changes are picked up
+    without a restart. LexiSwitch only reads that folder, never writes to it.
 
 
 REMOVING IT

@@ -1,0 +1,156 @@
+# Lowercase letters a-z, digits and hyphens. The same id as a built-in replaces the built-in.
+id     = "funny-latin-to-ua"
+
+# What the transliteration window calls it.
+name   = "Funny Latin to Ukrainian"
+
+# The language the ruleset reads and the language it writes for, as language tags.
+source = "uk-UA"
+target = "en-US"
+
+# Optional. What to write for a Cyrillic letter this ruleset has no entry for. Without it such a
+# letter is left as it is; either way the window says how many there were. Latin letters, digits
+# and punctuation are never replaced.
+#
+fallback = "?"
+
+# Sequences of Cyrillic letters, of any length, and what to write for each.
+#
+#  * The longest sequence that matches wins: "зг" is read before "з" and "г", whatever order the
+#    lines are in. Order is never a priority here.
+#  * Write sequences in lowercase only. Capitals are worked out from the text: Щедрий gives
+#    Shchedryi, ЩУКА gives SHCHUKA. A sequence containing a capital is rejected.
+#  * An empty value drops the sequence.
+[map]
+"a" = "а"  
+"b" = "б"  
+"v" = "в"  
+"h" = "г"  
+"g" = "ґ"  
+"d" = "д"  
+"j" = "дж"  
+"e" = "е"  
+"ie" = "іє"  
+"zh" = "ж"  
+"z" = "з"  
+"th" = "з"
+"zgh" = "зг" 
+"y" = "и"  
+"i" = "і"  
+"yi" = "ї"  
+"ii" = "й"  
+"k" = "к"  
+"c" = "к"  
+"q" = "к"  
+"l" = "л"  
+"m" = "м"  
+"n" = "н"  
+"o" = "о" 
+"oo" = "у" # (e.g., pool → пул, book → бук)
+"p" = "п"  
+"r" = "р"  
+"s" = "с"  
+"t" = "т"  
+"u" = "у"  
+"w" = "у"  
+"f" = "ф"  
+"ph" = "ф"
+"kh" = "х"  
+"ts" = "ц"  
+"tch" = "ч"  
+"ch" = "ч"  
+"sh" = "ш"  
+"shch" = "щ"  
+"iu" = "ю"  
+"ia" = "я" 
+
+"x" = "кз" 
+
+"acy" = "ейсі"
+
+"tion" = "йшн"
+"ation" = "ейшн"
+"etion" = "ішн"
+"ition" = "ішн"
+"otion" = "оушн"
+"ution" = "юшн"
+
+"tial" = "шиал"
+"tional" = "шионал"
+"tially" = "шиалі"
+
+"ssion" = "шн"
+"sion" = "жн"
+
+"tious" = "шес" 
+"cious" = "шес" # (e.g., ambitious → ембішес, delicious → делішес)
+"cial" = "шл" # (e.g., partial → паршл, special → спешл)
+"ture" = "чуре" # (e.g., nature → нейчуре, future → ф'ючуре)
+"able" = "ейбл"
+"ible" = "ібл" # (e.g., table → тейбл, flexible → флексібл)
+
+"fy" = "фай" # (e.g., modfy → модіфай)
+"by" = "бай"
+
+"hu" = "хью"
+
+
+"nge" = "ндже"  # (e.g., change → чандж)
+
+"ight" = "айт" # (e.g., night → найт, light → лайт)
+"ought" = "от" # (e.g., brought → брот)
+"ough" = "аф" # (e.g., enough → інаф)
+"ee" = "і" 
+"ea" = "і" # (e.g., meet/meat → міт, team → тім)
+
+"oa" = "оу" # (e.g., boat → боут, coat → коут)
+"ow" = "оу" # (e.g., window → віндоу)
+"ou" = "оу" 
+
+"ai" = "ей" # (e.g. Constraints - констрейнс)
+"ay" = "ей"
+
+"wa" = "ва"
+"we" = "ве"
+"wi" = "ві"
+"wu" = "ву"
+"wo" = "во"
+
+# ------------------------------
+# Well-known words
+# ------------------------------
+"and" = "енд"
+"is" = "із"
+"via" = "віа"
+
+
+
+# Dropped. A dropped character does not end a word, so in Знам'янка the "я" is not at the start
+# of one and gives "ia": Znamianka.
+# "ь"  = ""
+#"’"  = ""       # U+2019, what word processors turn an apostrophe into
+# "ʼ"  = ""       # U+02BC, the apostrophe recommended for Ukrainian
+# The plain keyboard apostrophe. It is dropped too, which also drops it where you meant it as a
+# quotation mark: 'Київ' gives Kyiv with no quotes. If you quote with it, delete this line.
+"'"  = ""
+
+# Values used instead of the ones above when the sequence starts a word: at the start of the
+# text, or after anything that is not a letter (a space, a hyphen, a digit, punctuation).
+# Єнакієве gives Yenakiieve; Івано-Франківськ gives Ivano-Frankivsk.
+[word_start]
+"be" = "бі"
+"ye" = "є"
+"yi" = "ї"
+"y" = "й"
+"yu" = "ю"
+"ya" = "я"
+"w" = "в"
+"wh" = "в" # (e.g., when → вен)
+"wr" = "р" # (e.g., write → райт)
+"kn" = "н" # (e.g., know → ноу, knife → найф)
+"u" = "ю"  # (e.g., user → юзер, united → юнітед)
+
+"one" = "ван"
+"two" = "ту"
+
+"cent" = "цент"

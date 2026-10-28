@@ -8,16 +8,19 @@
 //! initializes its own rather than accepting one built elsewhere.
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use lexiswitch_core::candidates::{self, Candidate};
 use lexiswitch_core::casing;
 use lexiswitch_core::layout::LayoutTable;
+use lexiswitch_core::translit::Rulesets;
 use lexiswitch_core::usage::Usage;
 use lexiswitch_win::casewindow;
 use lexiswitch_win::chooser::{self, Decision};
 use lexiswitch_win::focus::Uia;
 use lexiswitch_win::transaction::Transaction;
+use lexiswitch_win::translitwindow;
 use lexiswitch_win::window::Waker;
 
 /// Work handed to the worker. Everything here is owned data — nothing borrows from the
@@ -54,6 +57,16 @@ pub enum Job {
         expanded_lines: i32,
         /// Where the usage counts live. The worker owns that file outright — see `run`.
         state_path: Option<std::path::PathBuf>,
+    },
+    /// Transliterate whatever is selected, offering every loaded ruleset.
+    ///
+    /// Carries the rulesets as they were when the shortcut was pressed. A reload swaps the
+    /// message loop's copy for a new one; this one is not touched, so a window already open
+    /// keeps the set it opened with ([ADR-0017](../../docs/adr/0017-transliteration-third-transaction.md)).
+    Translit {
+        rulesets: Arc<Rulesets>,
+        allow_clipboard: bool,
+        expanded_lines: i32,
     },
     /// Finish and let the thread exit.
     Stop,
@@ -160,6 +173,16 @@ fn run(rx: Receiver<Job>, out: Sender<Outcome>, waker: Waker) {
                 }
                 outcome
             }
+            Job::Translit {
+                rulesets,
+                allow_clipboard,
+                expanded_lines,
+            } => transliterate(
+                uia.as_ref().and_then(|u| u.automation()),
+                &rulesets,
+                allow_clipboard,
+                expanded_lines,
+            ),
             Job::Selection {
                 tables,
                 handles,
@@ -344,8 +367,98 @@ fn change_case(
                 },
                 true => Outcome::Note {
                     title: format!("Changed case, {}", style.label()),
-                    body: "The clipboard held an image or formatted content, which the                            conversion destroyed. Text on it was restored."
+                    body: "The clipboard held an image or formatted content, which the \
+                           conversion destroyed. Text on it was restored."
                         .to_string(),
+                },
+            }
+        }
+    }
+}
+
+/// Read the selection, offer every ruleset's result, and apply whichever the user commits.
+///
+/// The case path again with a different window: the same transaction, the same commit, the same
+/// distinguishable outcomes, and no notion of a target layout.
+fn transliterate(
+    automation: Option<&windows::Win32::UI::Accessibility::IUIAutomation>,
+    rulesets: &Rulesets,
+    allow_clipboard: bool,
+    expanded_lines: i32,
+) -> Outcome {
+    // No owner window: the worker owns none, and the clipboard does not need one.
+    let owner = windows::Win32::Foundation::HWND(std::ptr::null_mut());
+    let mut transaction = match Transaction::begin(automation, owner, allow_clipboard, 5) {
+        Ok(t) => t,
+        Err(e) => {
+            return Outcome::Failed {
+                title: "Selection could not be read".into(),
+                body: e.to_string(),
+            }
+        }
+    };
+
+    // Every ruleset, every time, each rendered from the original selection.
+    let rows: Vec<translitwindow::Row> = rulesets
+        .iter()
+        .map(|ruleset| {
+            let result = ruleset.apply(transaction.original());
+            translitwindow::Row {
+                name: ruleset.name().to_string(),
+                source: ruleset.source().to_string(),
+                target: ruleset.target().to_string(),
+                text: result.text,
+                untouched: result.untouched,
+            }
+        })
+        .collect();
+
+    let shown = translitwindow::show(transaction.original(), &rows, expanded_lines, owner, 5).map(
+        |(decision, copied)| {
+            // Before either ending, so a copy survives cancelling and committing alike.
+            if let Some(c) = copied {
+                transaction.keep_on_clipboard(c.text, c.exposable);
+            }
+            decision
+        },
+    );
+
+    match shown {
+        Err(e) => {
+            // The window could not take the foreground, so it could never have been typed
+            // into. Nothing was modified.
+            let _ = transaction.cancel();
+            Outcome::Failed {
+                title: "Transliteration window did not open".into(),
+                body: e.to_string(),
+            }
+        }
+        Ok(translitwindow::Decision::Cancel) => match transaction.cancel() {
+            Ok(()) => Outcome::Quiet {
+                note: "translit_cancelled",
+            },
+            Err(e) => Outcome::Failed {
+                title: "Cancelled, with a loose end".into(),
+                body: e.to_string(),
+            },
+        },
+        Ok(translitwindow::Decision::Apply { index }) => {
+            let row = &rows[index];
+            match transaction.commit(&row.text) {
+                // Never reported as success, and never partially: the transaction restores what
+                // it can before returning the error.
+                Err(e) => Outcome::Failed {
+                    title: "Replacement failed".into(),
+                    body: e.to_string(),
+                },
+                Ok(committed) if committed.lost_nontext => Outcome::Note {
+                    title: format!("Transliterated, {}", row.name),
+                    body: "The clipboard held an image or formatted content, which the \
+                           conversion destroyed. Text on it was restored."
+                        .to_string(),
+                },
+                Ok(_) => Outcome::Quiet {
+                    note: "translit_applied",
                 },
             }
         }

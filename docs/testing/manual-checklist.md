@@ -186,10 +186,36 @@ the version is where a user would look for it.
 
 Use a release build: `cargo build --release`, then run `target\release\lexiswitch.exe`.
 
-| #  | Do this                                                   | Expect                                                                                          | Saw |
-|----|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------|-----|
-| F1 | Right-click the tray icon                                 | The first line reads `LexiSwitch <version>`, greyed, with a separator under it                  |     |
-| F2 | Click that first line                                     | The menu closes and nothing else happens                                                        |     |
-| F3 | Choose **Diagnostics**                                    | The balloon includes `Version <version>.`                                                       |     |
-| F4 | Explorer → right-click `lexiswitch.exe` → Properties → Details | Product name `LexiSwitch`; file version and product version are `<version>`              |     |
-| F5 | Task Manager → Processes                                  | The process is listed as `LexiSwitch`, not as a sentence                                        |     |
+| #  | Do this                                                        | Expect                                                                         | Saw |
+|----|----------------------------------------------------------------|--------------------------------------------------------------------------------|-----|
+| F1 | Right-click the tray icon                                      | The first line reads `LexiSwitch <version>`, greyed, with a separator under it |     |
+| F2 | Click that first line                                          | The menu closes and nothing else happens                                       |     |
+| F3 | Choose **Diagnostics**                                         | The balloon includes `Version <version>.`                                      |     |
+| F4 | Explorer → right-click `lexiswitch.exe` → Properties → Details | Product name `LexiSwitch`; file version and product version are `<version>`    |     |
+| F5 | Task Manager → Processes                                       | The process is listed as `LexiSwitch`, not as a sentence                       |     |
+
+## Group G — the transliteration window (added 2026-10-28)
+
+The engine is covered by `lexiswitch-core/tests/translit.rs` against both official tables, and
+ruleset loading by the same file's set tests. What only a person can confirm is the window, the
+folder round trip and the tray.
+
+Use a release build: `cargo build --release`, then run `target\release\lexiswitch.exe`. Close any
+stray Notepad first (CLAUDE.md, "Testing reality").
+
+| #   | Do this                                                                             | Expect                                                                                                             | Saw |
+|-----|-------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|-----|
+| G1  | Select `Щедрий Знам'янка ЩУКА` in Notepad, press `Win+Alt+Pause`                    | The window lists Ukrainian then russian; the Ukrainian row is selected and reads `Shchedryi Znamianka SHCHUKA`     |     |
+| G2  | Press `Enter`                                                                       | The selection is replaced with `Shchedryi Znamianka SHCHUKA` and focus is back in Notepad; typing layout unchanged |     |
+| G3  | Select it again, open the window, press `Esc`                                       | Nothing changes; the clipboard holds what it held before                                                           |     |
+| G4  | Select `Hello, world`, open the window                                              | Both rows are dimmed and say `no change`; `Enter` closes it changing nothing                                       |     |
+| G5  | Select `Київ ў`, open the window                                                    | The Ukrainian row ends `1 left · uk-UA → en-US` (`ў` is not Ukrainian)                                             |     |
+| G6  | Select a paragraph longer than a row, press `Space`, scroll with arrows             | The whole result wraps and scrolls; `Space` again returns to the list                                              |     |
+| G7  | Select text, `Ctrl+C` in the window, `Esc`, paste elsewhere                         | The pasted text is the transliteration; the document is unchanged                                                  |     |
+| G8  | Tray → **Open transliteration folder**                                              | Explorer opens `%APPDATA%\LexiSwitch\transliteration`, created empty if it was missing                             |     |
+| G9  | Copy `transliteration.example.toml` there with `id = "mine"`, `name = "Mine"`       | Within a few seconds a balloon says the rulesets reloaded; the window lists a third row, Mine                      |     |
+| G10 | Save that file with `[wordstart]` instead of `[word_start]`                         | Balloon names the file and line; tray needs attention; Mine still listed (its last good version)                   |     |
+| G11 | Fix the file and save                                                               | Balloon says reloaded; the tray returns to normal                                                                  |     |
+| G12 | With `change_case = "Alt+Win+Pause"` and no `transliterate` in config.toml, restart | It starts; the tray needs attention and says transliteration has no shortcut because `Win+Alt+Pause` changes case  |     |
+| G13 | Tray → **Change transliteration shortcut…**, record `Win+Ctrl+Pause`                | Accepted, written to config.toml as `transliterate`, the tray returns to normal and the shortcut opens the window  |     |
+| G14 | At 150% display scale, open the window                                              | Names, previews and the right-hand column do not overlap; the footer is not clipped                                |     |

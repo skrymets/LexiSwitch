@@ -22,6 +22,7 @@ ADR that supersedes the old one rather than editing history.
 | [0014](0014-case-conversion-is-a-separate-transaction.md) | Case conversion is a separate transaction                      | Accepted                                                          |
 | [0015](0015-usage-memory-outside-configuration.md)        | Usage memory lives outside the configuration file              | Accepted                                                          |
 | [0016](0016-semantic-versioning.md)                       | Semantic versioning, declared once                             | Accepted                                                          |
+| [0017](0017-transliteration-third-transaction.md)         | Transliteration is a third transaction, compiled at load       | Accepted                                                          |
 
 ## Format
 

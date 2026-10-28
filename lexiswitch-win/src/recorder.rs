@@ -271,6 +271,9 @@ impl Recorder<'_> {
         let current = match self.current {
             Shortcut::Registered(b) => format!("Currently {b}"),
             Shortcut::Conflict(b) => format!("{b} is held by another application"),
+            Shortcut::Unbound { binding, .. } => {
+                format!("None yet: {binding} is already another LexiSwitch shortcut")
+            }
         };
         self.pen.draw_aligned(hdc, &current, pad, y, inner, dim, DT_LEFT);
         y += self.pen.line_height + 8 * scale;

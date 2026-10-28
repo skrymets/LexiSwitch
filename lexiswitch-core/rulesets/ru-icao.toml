@@ -1,0 +1,45 @@
+# russian to Latin, per ICAO Doc 9303 (Machine Readable Travel Documents), Part 3 — the scheme
+# russian passports have used since 2014. Plain letters, no position rules.
+#
+# Built in: compiled into the program. To change it, copy this file into
+# %APPDATA%\LexiSwitch\transliteration\ and edit the copy; a file with the same id replaces this one.
+
+id     = "ru-icao"
+name   = "russian (ICAO Doc 9303)"
+source = "ru-RU"
+target = "en-US"
+
+[map]
+"а" = "a"
+"б" = "b"
+"в" = "v"
+"г" = "g"
+"д" = "d"
+"е" = "e"
+"ё" = "e"
+"ж" = "zh"
+"з" = "z"
+"и" = "i"
+"й" = "i"
+"к" = "k"
+"л" = "l"
+"м" = "m"
+"н" = "n"
+"о" = "o"
+"п" = "p"
+"р" = "r"
+"с" = "s"
+"т" = "t"
+"у" = "u"
+"ф" = "f"
+"х" = "kh"
+"ц" = "ts"
+"ч" = "ch"
+"ш" = "sh"
+"щ" = "shch"
+"ъ" = "ie"
+"ы" = "y"
+"ь" = ""
+"э" = "e"
+"ю" = "iu"
+"я" = "ia"

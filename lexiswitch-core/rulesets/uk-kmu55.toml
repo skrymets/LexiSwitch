@@ -1,0 +1,62 @@
+# Ukrainian to Latin, per Resolution No. 55 of the Cabinet of Ministers of Ukraine,
+# 27 January 2010 — the national standard for passports, place names and road signs.
+#
+# Built in: compiled into the program. To change it, copy this file into
+# %APPDATA%\LexiSwitch\transliteration\ and edit the copy; a file with the same id replaces this one.
+
+id     = "uk-kmu55"
+name   = "Ukrainian (Resolution No. 55)"
+source = "uk-UA"
+target = "en-US"
+
+# Sequences of any length. The longest one that matches wins, so "зг" is read before "з" and "г"
+# whatever order they are written in. Write them in lowercase; capitals are derived.
+[map]
+"а"  = "a"
+"б"  = "b"
+"в"  = "v"
+"г"  = "h"
+"ґ"  = "g"
+"д"  = "d"
+"е"  = "e"
+"є"  = "ie"
+"ж"  = "zh"
+"з"  = "z"
+"зг" = "zgh"    # to tell it from "ж" (zh): Згорани is Zghorany, not Zhorany
+"и"  = "y"
+"і"  = "i"
+"ї"  = "i"
+"й"  = "i"
+"к"  = "k"
+"л"  = "l"
+"м"  = "m"
+"н"  = "n"
+"о"  = "o"
+"п"  = "p"
+"р"  = "r"
+"с"  = "s"
+"т"  = "t"
+"у"  = "u"
+"ф"  = "f"
+"х"  = "kh"
+"ц"  = "ts"
+"ч"  = "ch"
+"ш"  = "sh"
+"щ"  = "shch"
+"ю"  = "iu"
+"я"  = "ia"
+
+# Not transliterated. An empty value drops the character, and a dropped character does not end a
+# word: the "я" in Знам'янка is not at the start of one, so it is "ia" — Znamianka.
+"ь"  = ""
+"'"  = ""       # what a keyboard types for the apostrophe
+"’"  = ""       # U+2019, what word processors turn it into
+"ʼ"  = ""       # U+02BC, the apostrophe the Unicode standard recommends for Ukrainian
+
+# At the start of a word these replace the values above: Єнакієве is Yenakiieve.
+[word_start]
+"є" = "ye"
+"ї" = "yi"
+"й" = "y"
+"ю" = "yu"
+"я" = "ya"

@@ -15,9 +15,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::error::Error;
+use std::sync::Arc;
 
 use lexiswitch_core::config::Config;
 use lexiswitch_core::state::{AgentState, Shortcut, Shortcuts};
+use lexiswitch_core::translit::{RulesetFailure, Rulesets};
 
 use lexiswitch_win::focus::process_name;
 use lexiswitch_win::hotkey::{parse_binding, HotkeyId, Hotkeys};
@@ -34,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 mod configwatch;
 mod worker;
 
-use configwatch::{ConfigWatcher, EventLog, Loaded};
+use configwatch::{ConfigWatcher, EventLog, Loaded, RulesetWatcher};
 use worker::{Job, Outcome, Worker};
 
 /// The version, from the workspace manifest — the one place it is declared (ADR-0016). The
@@ -103,6 +105,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     // than returned, so the tray still comes up to report it.
     let mut runtime_error: Option<String> = None;
 
+    // --- transliteration rulesets ---------------------------------------------------
+    //
+    // The built-ins overlaid by the user's folder, compiled now and immutable afterwards. A file
+    // that fails is reported once the tray exists; every other ruleset is used regardless.
+    // Shared with the worker by `Arc`, so a reload swaps this copy and leaves one already handed
+    // to an open window alone.
+    let (loaded, mut ruleset_failures) =
+        configwatch::load_rulesets(configwatch::translit_dir().as_deref(), &Rulesets::builtin());
+    let mut rulesets = Arc::new(loaded);
+
     // Reported, not silently dropped. A removed setting and a misspelled one both land here,
     // and naming them is the only way the user can tell which they are looking at. Held until
     // the tray exists, since that is where the user will see it.
@@ -141,11 +153,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (mut hotkeys, mut shortcuts) = register_hotkeys(&window, &config, &mut log);
 
     let mut enabled = config.general.enabled;
-    let mut state = AgentState::resolve(
+    let mut state = resolve_state(
         layout_count,
-        shortcuts.clone(),
+        &shortcuts,
         enabled,
-        runtime_error.clone(),
+        &runtime_error,
+        &ruleset_failures,
     );
 
     let tray = Tray::new(window.hwnd(), &state)?;
@@ -166,6 +179,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // --- the worker ----------------------------------------------------------------
     let (work, outcomes) = Worker::spawn(window.waker());
     let mut watcher = config_path.clone().map(ConfigWatcher::new);
+    let mut ruleset_watcher = RulesetWatcher::new(configwatch::translit_dir());
 
     // A heartbeat, so the configuration file is actually polled. The poll lives in the handler
     // below, and the handler only runs when a message arrives — an idle agent gets none, so
@@ -220,7 +234,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                                 tray.notify(
                                     "Some shortcuts were not registered",
                                     &format!(
-                                        "{refused} Both commands remain available from this                                          menu."
+                                        "{refused} Every command remains available from this \
+                                         menu."
                                     ),
                                 );
                             }
@@ -253,7 +268,45 @@ fn run() -> Result<(), Box<dyn Error>> {
                         log.note("config_rejected");
                     }
                 }
+                // The configuration decides which shortcuts are bound, and which gave way.
+                state = resolve_state(
+                    layout_count,
+                    &shortcuts,
+                    enabled,
+                    &runtime_error,
+                    &ruleset_failures,
+                );
+                tray.set_state(&state);
             }
+        }
+
+        // The rulesets folder, on the same tick. Rebuilt whole and swapped whole; a file that
+        // fails keeps its last good version, which is why the current set is passed in.
+        if ruleset_watcher.changed() {
+            let (loaded, failures) = configwatch::load_rulesets(ruleset_watcher.dir(), &rulesets);
+            rulesets = Arc::new(loaded);
+            log.note(&format!(
+                "rulesets_reloaded count={} rejected={}",
+                rulesets.len(),
+                failures.len()
+            ));
+            if failures.is_empty() {
+                tray.notify(
+                    "Transliteration rulesets reloaded",
+                    &format!("{} rulesets are offered.", rulesets.len()),
+                );
+            } else {
+                tray.notify("Transliteration ruleset not loaded", &describe_failures(&failures));
+            }
+            ruleset_failures = failures;
+            state = resolve_state(
+                layout_count,
+                &shortcuts,
+                enabled,
+                &runtime_error,
+                &ruleset_failures,
+            );
+            tray.set_state(&state);
         }
 
         // Which menu command to act on, if any, from whichever route it arrived by.
@@ -267,8 +320,16 @@ fn run() -> Result<(), Box<dyn Error>> {
 
         match msg.message {
             WM_HOTKEY => {
-                // Both shortcuts are gated on the same enabled state: disabling LexiSwitch
-                // disables LexiSwitch, not one of its two transactions.
+                // Every shortcut is gated on the same enabled state: disabling LexiSwitch
+                // disables LexiSwitch, not one of its transactions.
+                if state.converts()
+                    && matches!(
+                        HotkeyId::from_raw(msg.wParam.0 as i32),
+                        Some(HotkeyId::Transliterate)
+                    )
+                {
+                    request_translit(&work, &rulesets, &config, &mut log);
+                }
                 if state.converts()
                     && matches!(
                         HotkeyId::from_raw(msg.wParam.0 as i32),
@@ -311,8 +372,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                         layouts = built;
                     }
                 }
-                if matches!(shortcuts.convert, Shortcut::Conflict(_))
-                    || matches!(shortcuts.case, Shortcut::Conflict(_))
+                if [&shortcuts.convert, &shortcuts.case, &shortcuts.translit]
+                    .iter()
+                    .any(|s| matches!(s, Shortcut::Conflict(_)))
                 {
                     // Release first: re-registering a combination this process already holds
                     // would be refused, and would look exactly like the conflict it is meant
@@ -326,6 +388,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     for (was, now, which) in [
                         (&shortcuts.convert, &s.convert, "convert"),
                         (&shortcuts.case, &s.case, "case"),
+                        (&shortcuts.translit, &s.translit, "translit"),
                     ] {
                         if matches!(was, Shortcut::Conflict(_))
                             && matches!(now, Shortcut::Registered(_))
@@ -335,11 +398,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     shortcuts = s;
                 }
-                let refreshed = AgentState::resolve(
+                let refreshed = resolve_state(
                     layout_count,
-                    shortcuts.clone(),
+                    &shortcuts,
                     enabled,
-                    runtime_error.clone(),
+                    &runtime_error,
+                    &ruleset_failures,
                 );
                 if refreshed != state {
                     state = refreshed;
@@ -378,11 +442,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         log.note(&format!("enabled_not_saved: {e}"));
                     }
                     config.general.enabled = enabled;
-                    state = AgentState::resolve(
+                    state = resolve_state(
                         layout_count,
-                        shortcuts.clone(),
+                        &shortcuts,
                         enabled,
-                        runtime_error.clone(),
+                        &runtime_error,
+                        &ruleset_failures,
                     );
                     tray.set_state(&state);
                     log.note(if enabled { "enabled" } else { "disabled" });
@@ -396,6 +461,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                     } else {
                         tray.notify(&state.summary(), &state.explanation());
                     }
+                }
+                MenuCommand::Transliterate => {
+                    // The same job the shortcut sends, and the only way in while that shortcut
+                    // is held elsewhere or has no binding at all.
+                    if state.converts() {
+                        request_translit(&work, &rulesets, &config, &mut log);
+                    } else {
+                        tray.notify(&state.summary(), &state.explanation());
+                    }
+                }
+                MenuCommand::OpenTranslitFolder => {
+                    open_translit_folder(ruleset_watcher.dir(), &tray)
                 }
                 MenuCommand::ConvertSelection => {
                     // The same job the hotkey sends, and the only way to convert while the
@@ -425,11 +502,13 @@ fn run() -> Result<(), Box<dyn Error>> {
                         "APPDATA is not set, so there is nowhere to look.",
                     ),
                 },
-                MenuCommand::ChangeShortcut | MenuCommand::ChangeCaseShortcut => {
-                    let which = if command == MenuCommand::ChangeShortcut {
-                        Which::Convert
-                    } else {
-                        Which::Case
+                MenuCommand::ChangeShortcut
+                | MenuCommand::ChangeCaseShortcut
+                | MenuCommand::TransliterateShortcut => {
+                    let which = match command {
+                        MenuCommand::ChangeShortcut => Which::Convert,
+                        MenuCommand::ChangeCaseShortcut => Which::Case,
+                        _ => Which::Translit,
                     };
                     change_shortcut(
                         which,
@@ -441,11 +520,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         &mut shortcuts,
                         &mut log,
                     );
-                    state = AgentState::resolve(
+                    state = resolve_state(
                         layout_count,
-                        shortcuts.clone(),
+                        &shortcuts,
                         enabled,
-                        runtime_error.clone(),
+                        &runtime_error,
+                        &ruleset_failures,
                     );
                     tray.set_state(&state);
                 }
@@ -455,10 +535,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                     tray.notify(
                         &state.summary(),
                         &format!(
-                            "{}\nVersion {}. Layouts installed: {}. Configuration: {}. Logging: {}.",
+                            "{}\nVersion {}. Layouts installed: {}. Rulesets: {}. Configuration: {}. Logging: {}.",
                             state.explanation(),
                             VERSION,
                             layout_count,
+                            rulesets.iter().map(|r| r.id()).collect::<Vec<_>>().join(", "),
                             config_path
                                 .as_deref()
                                 .map(|p| p.display().to_string())
@@ -513,13 +594,56 @@ fn request_conversion(
     });
 }
 
-/// The bindings that could not be taken, as a sentence — empty when both registered.
+/// Ask the worker to transliterate whatever is selected, under the rulesets as they are now.
+///
+/// Reachable from the shortcut and from the tray, for the same reason the other two are.
+fn request_translit(work: &Worker, rulesets: &Arc<Rulesets>, config: &Config, log: &mut EventLog) {
+    log.note(&format!(
+        "translit_requested app={} rulesets={}",
+        process_name(FocusGuard::capture().window()),
+        rulesets.len()
+    ));
+    work.send(Job::Translit {
+        rulesets: Arc::clone(rulesets),
+        allow_clipboard: config.selection.allow_clipboard_fallback,
+        expanded_lines: config.chooser.expanded_lines(),
+    });
+}
+
+/// Work out the state, including any ruleset that did not load.
+///
+/// One place, because the state is recomputed wherever any of its inputs can change, and a
+/// recomputation that forgot the rulesets would quietly clear the warning about them.
+fn resolve_state(
+    layout_count: usize,
+    shortcuts: &Shortcuts,
+    enabled: bool,
+    runtime_error: &Option<String>,
+    ruleset_failures: &[RulesetFailure],
+) -> AgentState {
+    AgentState::resolve(layout_count, shortcuts.clone(), enabled, runtime_error.clone())
+        .with_rejected_rulesets(ruleset_failures.iter().map(|f| f.to_string()).collect())
+}
+
+/// Rejected ruleset files, as one message: each with its line and its problem.
+fn describe_failures(failures: &[RulesetFailure]) -> String {
+    let each: Vec<String> = failures.iter().map(|f| f.to_string()).collect();
+    format!(
+        "{}. Its last good version, if it had one, is still in use, and so is every other \
+         ruleset.",
+        each.join("; ")
+    )
+}
+
+/// The bindings that could not be taken, as a sentence — empty when every one registered.
+///
+/// A shortcut with no binding at all is not here: nothing was attempted, so nothing was refused.
 fn unavailable(shortcuts: &Shortcuts) -> String {
-    let held: Vec<&str> = [&shortcuts.convert, &shortcuts.case]
+    let held: Vec<&str> = [&shortcuts.convert, &shortcuts.case, &shortcuts.translit]
         .into_iter()
         .filter_map(|s| match s {
             Shortcut::Conflict(binding) => Some(binding.as_str()),
-            Shortcut::Registered(_) => None,
+            Shortcut::Registered(_) | Shortcut::Unbound { .. } => None,
         })
         .collect();
     match held.len() {
@@ -529,11 +653,12 @@ fn unavailable(shortcuts: &Shortcuts) -> String {
     }
 }
 
-/// Which of the two shortcuts a command is about.
+/// Which of the shortcuts a command is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Which {
     Convert,
     Case,
+    Translit,
 }
 
 impl Which {
@@ -542,6 +667,7 @@ impl Which {
         match self {
             Self::Convert => "convert_selection",
             Self::Case => "change_case",
+            Self::Translit => "transliterate",
         }
     }
 
@@ -550,6 +676,25 @@ impl Which {
         match self {
             Self::Convert => "converts the selection",
             Self::Case => "changes case",
+            Self::Translit => "transliterates",
+        }
+    }
+
+    /// This shortcut's state among `shortcuts`.
+    fn of(self, shortcuts: &Shortcuts) -> &Shortcut {
+        match self {
+            Self::Convert => &shortcuts.convert,
+            Self::Case => &shortcuts.case,
+            Self::Translit => &shortcuts.translit,
+        }
+    }
+
+    /// This shortcut's binding in `config`, for writing a trial into.
+    fn binding(self, config: &mut Config) -> &mut String {
+        match self {
+            Self::Convert => &mut config.hotkeys.convert_selection,
+            Self::Case => &mut config.hotkeys.change_case,
+            Self::Translit => &mut config.hotkeys.transliterate,
         }
     }
 }
@@ -598,15 +743,14 @@ fn change_shortcut(
     let mut rejected: Option<String> = None;
 
     loop {
-        let current = match which {
-            Which::Convert => shortcuts.convert.clone(),
-            Which::Case => shortcuts.case.clone(),
-        };
-        // Both bindings, so the recorder never suggests the one this program already holds.
-        let taken = vec![
-            config.hotkeys.convert_selection.clone(),
-            config.hotkeys.change_case.clone(),
-        ];
+        let current = which.of(shortcuts).clone();
+        // Every binding, so the recorder never suggests one this program already holds.
+        let taken: Vec<String> = config
+            .hotkeys
+            .all()
+            .iter()
+            .map(|(_, b)| b.to_string())
+            .collect();
         let recorded = match recorder::show(&current, &taken, rejected.take()) {
             Ok(r) => r,
             Err(e) => {
@@ -625,32 +769,31 @@ fn change_shortcut(
         // process too and the user may be moving one onto the other.
         *hotkeys = None;
         let mut trial = config.clone();
-        match which {
-            Which::Convert => trial.hotkeys.convert_selection = binding.clone(),
-            Which::Case => trial.hotkeys.change_case = binding.clone(),
-        }
+        *which.binding(&mut trial) = binding.clone();
 
         // Refused before it is attempted, because the registration failure would name another
-        // application and there is none — the combination is this program's own other shortcut.
-        let clash = match which {
-            Which::Convert => trial.hotkeys.change_case.clone(),
-            Which::Case => trial.hotkeys.convert_selection.clone(),
-        };
-        if clash.trim().eq_ignore_ascii_case(binding.trim()) {
+        // application and there is none — the combination is one of this program's own other
+        // shortcuts. An unbound shortcut's default is not one of them: it holds nothing.
+        let clash = config
+            .hotkeys
+            .all()
+            .iter()
+            .filter(|(key, _)| *key != which.key())
+            .filter(|(key, _)| !config.unbound().iter().any(|u| u.key == *key))
+            .any(|(_, other)| other.trim().eq_ignore_ascii_case(binding.trim()));
+        if clash {
             let (h, s) = register_hotkeys(window, config, log);
             *hotkeys = h;
             *shortcuts = s;
             rejected = Some(format!(
-                "{binding} is already the other LexiSwitch shortcut. One combination cannot                  open two windows."
+                "{binding} is already another LexiSwitch shortcut. One combination cannot \
+                 open two windows."
             ));
             continue;
         }
 
         let (registered, attempted) = register_hotkeys(window, &trial, log);
-        let took = match which {
-            Which::Convert => matches!(attempted.convert, Shortcut::Registered(_)),
-            Which::Case => matches!(attempted.case, Shortcut::Registered(_)),
-        };
+        let took = matches!(which.of(&attempted), Shortcut::Registered(_));
 
         if took {
             *hotkeys = registered;
@@ -669,7 +812,8 @@ fn change_shortcut(
                 &match written {
                     Ok(()) => format!("{binding} now {}.", which.does()),
                     Err(e) => format!(
-                        "{binding} now {}, but it could not be saved: {e}. It will revert                          when LexiSwitch restarts.",
+                        "{binding} now {}, but it could not be saved: {e}. It will revert \
+                         when LexiSwitch restarts.",
                         which.does()
                     ),
                 },
@@ -705,7 +849,7 @@ fn persist_setting(
     std::fs::write(path, updated).map_err(|e| e.to_string())
 }
 
-/// Claim both bindings, keeping whatever the system will give.
+/// Claim every binding, keeping whatever the system will give.
 ///
 /// Returns what registered and the state of each binding. Never an error: one combination held
 /// by another application is a condition to report, not a reason to abandon the other — and a
@@ -719,11 +863,15 @@ fn register_hotkeys(
     let wanted = [
         (HotkeyId::ConvertSelection, &config.hotkeys.convert_selection),
         (HotkeyId::ChangeCase, &config.hotkeys.change_case),
+        (HotkeyId::Transliterate, &config.hotkeys.transliterate),
     ];
+    // A shortcut whose default gave way to a binding the user wrote is not attempted at all:
+    // registering it would collide with this program's own other shortcut.
+    let unbound = |id: HotkeyId| config.unbound().iter().find(|u| u.key == id.config_key());
 
     let mut bindings = Vec::new();
     let mut unparsed = Vec::new();
-    for (id, text) in wanted {
+    for (id, text) in wanted.into_iter().filter(|(id, _)| unbound(*id).is_none()) {
         match parse_binding(text) {
             Ok(b) => bindings.push((id, b)),
             Err(e) => {
@@ -739,7 +887,12 @@ fn register_hotkeys(
     }
 
     let status = |id: HotkeyId, text: &str| {
-        if unparsed.iter().any(|(u, _)| *u == id) || !outcome.hotkeys.holds(id) {
+        if let Some(u) = unbound(id) {
+            Shortcut::Unbound {
+                binding: u.binding.clone(),
+                taken_by: u.taken_by,
+            }
+        } else if unparsed.iter().any(|(u, _)| *u == id) || !outcome.hotkeys.holds(id) {
             Shortcut::Conflict(text.to_string())
         } else {
             Shortcut::Registered(text.to_string())
@@ -751,6 +904,7 @@ fn register_hotkeys(
             &config.hotkeys.convert_selection,
         ),
         case: status(HotkeyId::ChangeCase, &config.hotkeys.change_case),
+        translit: status(HotkeyId::Transliterate, &config.hotkeys.transliterate),
     };
 
     (Some(outcome.hotkeys), shortcuts)
@@ -775,6 +929,25 @@ fn open_config(path: &Option<std::path::PathBuf>, tray: &Tray) {
     // needing to know or care what that is.
     if let Err(e) = std::process::Command::new("explorer").arg(path).spawn() {
         tray.notify("Could not open configuration", &e.to_string());
+    }
+}
+
+/// Open the transliteration folder in Explorer, creating it empty if it does not exist.
+///
+/// Creates the folder and nothing in it. The rulesets there are the user's own files; the program
+/// reads them and never writes one (ADR-0017). The built-ins and the example shipped beside the
+/// program show what to put there.
+fn open_translit_folder(dir: Option<&std::path::Path>, tray: &Tray) {
+    let Some(dir) = dir else {
+        tray.notify("No transliteration folder", "APPDATA is not set.");
+        return;
+    };
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tray.notify("Could not create the transliteration folder", &e.to_string());
+        return;
+    }
+    if let Err(e) = std::process::Command::new("explorer").arg(dir).spawn() {
+        tray.notify("Could not open the transliteration folder", &e.to_string());
     }
 }
 

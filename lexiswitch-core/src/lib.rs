@@ -24,4 +24,5 @@ pub mod convert;
 pub mod layout;
 pub mod preview;
 pub mod state;
+pub mod translit;
 pub mod usage;

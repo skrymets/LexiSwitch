@@ -5,7 +5,7 @@ Typing Ukrainian words while an English or German layout is active produces garb
 several times a day.
 
 Punto Switcher solves this, but it is a Yandex product, and a global keystroke
-interceptor from a Russian-controlled company is not an acceptable thing to run. The
+interceptor from a russian-controlled company is not an acceptable thing to run. The
 objection is not evidence of exfiltration; it is that `SetWindowsHookEx` *can* intercept
 and alter every keystroke, and the vendor is not one whose assurances carry weight.
 

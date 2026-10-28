@@ -109,7 +109,8 @@ it will:
 2. run clippy, the tests, `cargo deny` and `cargo audit`
 3. build release and fail if `lexiswitch.exe` exceeds 5 MB, or if its version resource does
    not say `0.2.0`
-4. stage `lexiswitch.exe`, `packaging/INSTALL.txt` and `config.example.toml` into
+4. stage `lexiswitch.exe`, `packaging/INSTALL.txt`, `config.example.toml` and
+   `packaging/transliteration.example.toml` into
    `lexiswitch-0.2.0-x86_64-pc-windows-msvc.zip`, copy the program alone as
    `lexiswitch-0.2.0.exe`, and write a `.sha256` beside each
 5. create the release titled `LexiSwitch 0.2.0`, with an install preamble followed by GitHub's

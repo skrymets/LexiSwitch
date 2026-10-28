@@ -140,9 +140,10 @@ jobs:
           # INSTALL.txt rather than README.md: the README's links are repo-relative, so every
           # screenshot in it is a broken image once it is sitting in someone's unzipped folder.
           # The README is one click away online and says so at the bottom of INSTALL.txt.
-          Copy-Item target/release/lexiswitch.exe $stage
-          Copy-Item packaging/INSTALL.txt         $stage
-          Copy-Item config.example.toml           $stage
+          Copy-Item target/release/lexiswitch.exe          $stage
+          Copy-Item packaging/INSTALL.txt                  $stage
+          Copy-Item config.example.toml                    $stage
+          Copy-Item packaging/transliteration.example.toml $stage
 
           $zip = "dist/$name.zip"
           Compress-Archive -Path "$stage/*" -DestinationPath $zip

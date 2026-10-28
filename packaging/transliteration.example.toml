@@ -1,0 +1,90 @@
+# A LexiSwitch transliteration ruleset — an example to copy.
+#
+# Put ruleset files in %APPDATA%\LexiSwitch\transliteration\ (right-click the tray icon, "Open
+# transliteration folder"). Every *.toml file there is one ruleset. LexiSwitch picks up new,
+# changed and deleted files within a few seconds, without a restart, and never writes to the
+# folder itself.
+#
+# This one is the built-in Ukrainian ruleset, written out in full. Copied into the folder as it
+# stands, it replaces the built-in (same id) and changes nothing. Change the id and the name to
+# add a ruleset of your own instead.
+#
+# If a file has a mistake, the tray says which file and which line. That file's last working
+# version stays in use until you fix it, and every other ruleset keeps working.
+
+# Lowercase letters a-z, digits and hyphens. The same id as a built-in replaces the built-in.
+id     = "uk-kmu55"
+
+# What the transliteration window calls it.
+name   = "Ukrainian (Resolution No. 55)"
+
+# The language the ruleset reads and the language it writes for, as language tags.
+source = "uk-UA"
+target = "en-US"
+
+# Optional. What to write for a Cyrillic letter this ruleset has no entry for. Without it such a
+# letter is left as it is; either way the window says how many there were. Latin letters, digits
+# and punctuation are never replaced.
+#
+# fallback = "?"
+
+# Sequences of Cyrillic letters, of any length, and what to write for each.
+#
+#  * The longest sequence that matches wins: "зг" is read before "з" and "г", whatever order the
+#    lines are in. Order is never a priority here.
+#  * Write sequences in lowercase only. Capitals are worked out from the text: Щедрий gives
+#    Shchedryi, ЩУКА gives SHCHUKA. A sequence containing a capital is rejected.
+#  * An empty value drops the sequence.
+[map]
+"а"  = "a"
+"б"  = "b"
+"в"  = "v"
+"г"  = "h"
+"ґ"  = "g"
+"д"  = "d"
+"е"  = "e"
+"є"  = "ie"
+"ж"  = "zh"
+"з"  = "z"
+"зг" = "zgh"    # so that Згорани is Zghorany, not Zhorany
+"и"  = "y"
+"і"  = "i"
+"ї"  = "i"
+"й"  = "i"
+"к"  = "k"
+"л"  = "l"
+"м"  = "m"
+"н"  = "n"
+"о"  = "o"
+"п"  = "p"
+"р"  = "r"
+"с"  = "s"
+"т"  = "t"
+"у"  = "u"
+"ф"  = "f"
+"х"  = "kh"
+"ц"  = "ts"
+"ч"  = "ch"
+"ш"  = "sh"
+"щ"  = "shch"
+"ю"  = "iu"
+"я"  = "ia"
+
+# Dropped. A dropped character does not end a word, so in Знам'янка the "я" is not at the start
+# of one and gives "ia": Znamianka.
+"ь"  = ""
+"’"  = ""       # U+2019, what word processors turn an apostrophe into
+"ʼ"  = ""       # U+02BC, the apostrophe recommended for Ukrainian
+# The plain keyboard apostrophe. It is dropped too, which also drops it where you meant it as a
+# quotation mark: 'Київ' gives Kyiv with no quotes. If you quote with it, delete this line.
+"'"  = ""
+
+# Values used instead of the ones above when the sequence starts a word: at the start of the
+# text, or after anything that is not a letter (a space, a hyphen, a digit, punctuation).
+# Єнакієве gives Yenakiieve; Івано-Франківськ gives Ivano-Frankivsk.
+[word_start]
+"є" = "ye"
+"ї" = "yi"
+"й" = "y"
+"ю" = "yu"
+"я" = "ya"

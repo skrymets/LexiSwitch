@@ -229,3 +229,64 @@ fn the_sameness_check_is_not_fooled_by_spelling() {
         "the same combination spelled differently was accepted"
     );
 }
+
+// --- the transliteration shortcut ----------------------------------------------------
+
+#[test]
+fn the_transliteration_shortcut_has_a_default() {
+    let config = Config::parse("").expect("an empty file is valid");
+    assert_eq!(config.hotkeys.transliterate, "Win+Alt+Pause");
+    assert!(config.unbound().is_empty());
+}
+
+#[test]
+fn an_empty_transliteration_shortcut_is_rejected_with_its_line() {
+    let text = "[hotkeys]\ntransliterate = \"\"\n";
+    let err = Config::parse(text).expect_err("an empty binding is not usable");
+    assert!(err.to_string().contains("transliterate"), "got {err}");
+    assert_eq!(err.line(), Some(2));
+}
+
+/// Two bindings the user wrote that collide are a mistake in the file, as before.
+#[test]
+fn a_written_transliteration_shortcut_may_not_repeat_another() {
+    let text = "[hotkeys]\nconvert_selection = \"Ctrl+Alt+K\"\nchange_case = \"Ctrl+Alt+C\"\ntransliterate = \"Ctrl+Alt+C\"\n";
+    let err = Config::parse(text).expect_err("one combination cannot do both");
+    assert!(err.to_string().contains("transliterate"), "got {err}");
+    assert!(err.to_string().contains("change_case"), "got {err}");
+    assert_eq!(err.line(), Some(4));
+}
+
+/// A file from before this version that rebound case to the new default. The user's binding
+/// wins; transliteration is left without a shortcut and says why. Rejecting the file would stop
+/// the program starting after an upgrade.
+#[test]
+fn a_defaulted_shortcut_that_collides_with_a_written_one_is_left_unbound() {
+    // Exactly the shape of the configuration this was designed against.
+    let text = "[hotkeys]\nconvert_selection = \"Win+Shift+Pause\"\nchange_case = \"Alt+Win+Pause\"\n";
+    let config = Config::parse(text).expect("an upgrade must not stop the program starting");
+    assert_eq!(config.hotkeys.change_case, "Alt+Win+Pause");
+    let unbound = config.unbound();
+    assert_eq!(unbound.len(), 1);
+    assert_eq!(unbound[0].key, "transliterate");
+    assert_eq!(unbound[0].binding, "Win+Alt+Pause");
+    assert_eq!(unbound[0].taken_by, "change_case");
+}
+
+/// The rule is about which binding was written, not about which shortcut is newest.
+#[test]
+fn any_defaulted_shortcut_gives_way_to_a_written_one() {
+    let text = "[hotkeys]\ntransliterate = \"Win+Shift+Pause\"\n";
+    let config = Config::parse(text).expect("valid");
+    let unbound = config.unbound();
+    assert_eq!(unbound.len(), 1);
+    assert_eq!(unbound[0].key, "convert_selection");
+    assert_eq!(unbound[0].taken_by, "transliterate");
+}
+
+#[test]
+fn a_file_without_the_transliteration_shortcut_still_loads() {
+    let config = Config::parse(PREVIOUS_VERSION_CONFIG).expect("valid");
+    assert_eq!(config.hotkeys.transliterate, "Win+Alt+Pause");
+    assert!(config.unbound().is_empty());
+}

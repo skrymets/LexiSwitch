@@ -36,6 +36,28 @@ pub struct Config {
     pub logging: Logging,
     #[serde(flatten)]
     unknown: Unknown,
+    /// Shortcuts left without a binding because their default was already taken by one the
+    /// user wrote. Not read from the file; worked out once it has been read.
+    #[serde(skip)]
+    unbound: Vec<Unbound>,
+}
+
+/// A shortcut that was left at its default, gave way to a binding the user wrote, and so has no
+/// binding at all.
+///
+/// Adding a shortcut with a default can collide with a binding a user chose before the shortcut
+/// existed. Rejecting the file would stop the program starting after an upgrade; taking the
+/// combination from the user would undo their choice. So the written binding wins and the new
+/// shortcut waits for one, and the user is told
+/// ([ADR-0017](../../docs/adr/0017-transliteration-third-transaction.md)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unbound {
+    /// The `[hotkeys]` key that has no binding.
+    pub key: &'static str,
+    /// The default it would have had.
+    pub binding: String,
+    /// The `[hotkeys]` key that holds that combination.
+    pub taken_by: &'static str,
 }
 
 /// Settings with nowhere more specific to live.
@@ -76,8 +98,22 @@ pub struct Hotkeys {
     /// Opens the case window. A separate transaction, so a separate binding
     /// ([ADR-0014](../../docs/adr/0014-case-conversion-is-a-separate-transaction.md)).
     pub change_case: String,
+    /// Opens the transliteration window. A third transaction, so a third binding
+    /// ([ADR-0017](../../docs/adr/0017-transliteration-third-transaction.md)).
+    pub transliterate: String,
     #[serde(flatten)]
     unknown: Unknown,
+}
+
+impl Hotkeys {
+    /// Every binding with its key, in the order the tray lists them.
+    pub fn all(&self) -> [(&'static str, &str); 3] {
+        [
+            ("convert_selection", &self.convert_selection),
+            ("change_case", &self.change_case),
+            ("transliterate", &self.transliterate),
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -129,11 +165,12 @@ impl Default for Chooser {
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            // Both defaults share the Win+…+Pause shape, so the pair is learned as one
-            // gesture with one finger moved rather than as two unrelated combinations. Pause
-            // is nearly unclaimed, and Win keeps them clear of application bindings.
+            // Every default shares the Win+…+Pause shape, so the set is learned as one gesture
+            // with one finger moved rather than as unrelated combinations. Pause is nearly
+            // unclaimed, and Win keeps them clear of application bindings.
             convert_selection: "Win+Shift+Pause".into(),
             change_case: "Win+Ctrl+Pause".into(),
+            transliterate: "Win+Alt+Pause".into(),
             unknown: Unknown::new(),
         }
     }
@@ -151,12 +188,28 @@ impl Default for Selection {
 impl Config {
     /// Parse and validate. Either the whole configuration is good, or nothing is returned.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let config: Config = toml::from_str(text).map_err(|e| ConfigError {
+        let to_error = |e: toml::de::Error| ConfigError {
             message: e.message().to_string(),
             line: e.span().map(|s| line_of_offset(text, s.start)),
-        })?;
-        config.validate(text)?;
+        };
+        let mut config: Config = toml::from_str(text).map_err(to_error)?;
+        // Which bindings the file states, as opposed to ones filled in from a default. A text
+        // that has just deserialised also parses as a table.
+        let table: toml::Table = toml::from_str(text).map_err(to_error)?;
+        let written = |key: &str| {
+            table
+                .get("hotkeys")
+                .and_then(toml::Value::as_table)
+                .is_some_and(|t| t.contains_key(key))
+        };
+        config.validate(text, &written)?;
         Ok(config)
+    }
+
+    /// Shortcuts that have no binding because their default was taken by a binding the user
+    /// wrote. Empty in every configuration that names its own shortcuts.
+    pub fn unbound(&self) -> &[Unbound] {
+        &self.unbound
     }
 
     /// Keys the file carried that nothing claimed, as dotted paths, sorted.
@@ -185,39 +238,61 @@ impl Config {
     ///
     /// Each failure carries the line the offending setting sits on, because "your config is
     /// wrong" without a location is a worse experience than no message at all.
-    fn validate(&self, text: &str) -> Result<(), ConfigError> {
-        if self.hotkeys.convert_selection.trim().is_empty() {
-            return Err(ConfigError::at(
-                text,
-                "hotkeys",
-                "convert_selection",
-                "convert_selection cannot be empty; give a binding such as \"Win+Shift+Pause\"",
-            ));
+    ///
+    /// Also works out [`Config::unbound`], which is why it takes `&mut self`: whether a collision
+    /// is an error or a shortcut giving way depends on which bindings `written` says the file
+    /// states.
+    fn validate(&mut self, text: &str, written: &dyn Fn(&str) -> bool) -> Result<(), ConfigError> {
+        let defaults = Hotkeys::default();
+        for ((key, binding), (_, default)) in self.hotkeys.all().into_iter().zip(defaults.all()) {
+            if binding.trim().is_empty() {
+                return Err(ConfigError::at(
+                    text,
+                    "hotkeys",
+                    key,
+                    &format!("{key} cannot be empty; give a binding such as \"{default}\""),
+                ));
+            }
         }
-        if self.hotkeys.change_case.trim().is_empty() {
-            return Err(ConfigError::at(
-                text,
-                "hotkeys",
-                "change_case",
-                "change_case cannot be empty; give a binding such as \"Win+Ctrl+Pause\"",
-            ));
-        }
+
         // Caught here rather than at registration, where it would surface as
         // ERROR_HOTKEY_ALREADY_REGISTERED and read as another application's fault. Compared
         // loosely because "Shift+Pause" and " shift + pause " are the same combination to
         // Windows and differ only in how they were typed into the file.
-        if same_binding(
-            &self.hotkeys.convert_selection,
-            &self.hotkeys.change_case,
-        ) {
-            return Err(ConfigError::at(
-                text,
-                "hotkeys",
-                "change_case",
-                "change_case and convert_selection cannot be the same combination; one \
-                 combination cannot open two different windows",
-            ));
+        let all = self.hotkeys.all();
+        let mut unbound = Vec::new();
+        for (i, &(later, later_binding)) in all.iter().enumerate() {
+            for &(earlier, earlier_binding) in &all[..i] {
+                if !same_binding(earlier_binding, later_binding) {
+                    continue;
+                }
+                match (written(earlier), written(later)) {
+                    (true, false) => unbound.push(Unbound {
+                        key: later,
+                        binding: later_binding.to_string(),
+                        taken_by: earlier,
+                    }),
+                    (false, true) => unbound.push(Unbound {
+                        key: earlier,
+                        binding: earlier_binding.to_string(),
+                        taken_by: later,
+                    }),
+                    // Both written, or — impossible while the defaults differ — neither.
+                    _ => {
+                        return Err(ConfigError::at(
+                            text,
+                            "hotkeys",
+                            later,
+                            &format!(
+                                "{later} and {earlier} cannot be the same combination; one \
+                                 combination cannot open two different windows"
+                            ),
+                        ))
+                    }
+                }
+            }
         }
+        self.unbound = unbound;
 
         Ok(())
     }
@@ -281,9 +356,16 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// One-based line containing a byte offset.
-fn line_of_offset(text: &str, offset: usize) -> usize {
-    text[..offset.min(text.len())].lines().count().max(1)
+/// One-based line containing a byte offset. Shared with [`crate::translit`], whose errors point
+/// into a file the same way.
+pub(crate) fn line_of_offset(text: &str, offset: usize) -> usize {
+    // Newlines are counted rather than lines, so an offset at the very start of a line — where
+    // a key that opens its line is reported — lands on that line and not the one before it.
+    text.as_bytes()[..offset.min(text.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+        + 1
 }
 
 /// Find the line where `key` is assigned inside `[section]`.

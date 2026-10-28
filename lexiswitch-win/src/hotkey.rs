@@ -25,6 +25,7 @@ use crate::WinError;
 pub enum HotkeyId {
     ConvertSelection = 2,
     ChangeCase = 5,
+    Transliterate = 6,
 }
 
 impl HotkeyId {
@@ -32,6 +33,7 @@ impl HotkeyId {
         match raw {
             2 => Some(Self::ConvertSelection),
             5 => Some(Self::ChangeCase),
+            6 => Some(Self::Transliterate),
             _ => None,
         }
     }
@@ -41,6 +43,7 @@ impl HotkeyId {
         match self {
             Self::ConvertSelection => "convert_selection",
             Self::ChangeCase => "change_case",
+            Self::Transliterate => "transliterate",
         }
     }
 }

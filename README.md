@@ -306,9 +306,19 @@ actually been verified by hand, and what broke on the way.
 
 ## Known Issues
 
-### ⚠️ [false-positive] Release v0.1.0 is flagged as malicious by VirusTotal :) 
-- This app's released binary v0.1.0 (`71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a`) is treated as malware by 3/71 antivirus scanners on [.exe @ VirusTotal](https://www.virustotal.com/gui/file/71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a/detection).
-- At the same time, only 1/67 security vendor flagged its `.zip` file (`e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75`) as malicious [.zip @ VirusTotal](https://www.virustotal.com/gui/file/e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75/detection).
+### ⚠️ [false-positive] Releases are flagged as malicious by a few VirusTotal scanners :)
+
+A handful of antivirus engines flag every release, out of roughly seventy. The labels are
+generic heuristics (`Trojan.Malware.300983.susgen`, plain `Malicious`) rather than a named
+family: an unsigned executable that reads the selection and drives the clipboard looks
+suspicious to a heuristic, whatever it actually does.
+
+| Release | File                                           | Flagged by                                                                                                             | SHA-256                                                            |
+|---------|------------------------------------------------|------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| 0.2.0   | `lexiswitch.exe` / `lexiswitch-0.2.0.exe`      | [2/71](https://www.virustotal.com/gui/file/c788d63e41b327d73fbb696568a37e4476181d22c62dd4e302f2aa2deb23ed7c/detection) | `c788d63e41b327d73fbb696568a37e4476181d22c62dd4e302f2aa2deb23ed7c` |
+| 0.2.0   | `lexiswitch-0.2.0-x86_64-pc-windows-msvc.zip`  | [1/68](https://www.virustotal.com/gui/file/15d2c168c5f793b312d72896bedb7709c1815efb7d9fc45a11a5cd033d6855d9/detection) | `15d2c168c5f793b312d72896bedb7709c1815efb7d9fc45a11a5cd033d6855d9` |
+| 0.1.0   | `lexiswitch.exe`                               | [3/71](https://www.virustotal.com/gui/file/71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a/detection) | `71d58e1dc3cfdea847720fc9d135202d33f032992b061903af41718c76c39a3a` |
+| 0.1.0   | `lexiswitch-v0.1.0-x86_64-pc-windows-msvc.zip` | [1/67](https://www.virustotal.com/gui/file/e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75/detection) | `e226f982751b750cb09e5a3c6fa30719783e10a69761edde3f6497c75824ca75` |
 
 > 🟢 **Yep!**  
 > This is why **open-source is good** – it allows anyone to inspect the code and verify what exactly it does, and ensure that it does not contain any malicious code.
